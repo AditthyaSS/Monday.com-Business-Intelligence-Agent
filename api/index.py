@@ -13,6 +13,11 @@ if _backend not in sys.path:
 
 try:
     from app.main import app  # noqa: F401
+
+    @app.get("/api/index.py")
+    @app.get("/api")
+    def _api_index():
+        return {"status": "ok", "service": "Skylark BI Agent API"}
 except Exception as _exc:
     # Surface the import error as a working FastAPI app so we can read it
     from fastapi import FastAPI
