@@ -136,6 +136,9 @@ A deal with no value is not treated as a ₹0 deal. Coverage is always reported:
 ### 6. Indian fiscal year
 Quarter logic uses April as FY start (Q1: Apr–Jun, Q2: Jul–Sep, Q3: Oct–Dec, Q4: Jan–Mar). Period labels include the FY year (e.g. "Q2 FY26-27").
 
+### 7. Bring Your Own Key (BYOK) & Quota Transparency
+The interface monitors remaining daily requests. If the shared free-tier quota is exhausted, users can supply their personal Gemini API key in the settings panel. Keys are stored locally in the browser (`localStorage`) and sent as a request header (`X-Custom-Gemini-Key`), bypassing the shared limit without server-side key logging.
+
 ---
 
 ## Monday.com configuration
@@ -198,89 +201,158 @@ Go to **Profile → Developers → My Access Tokens** and generate a token with 
 
 ## Local setup
 
-### Prerequisites
-- Python 3.11+
-- Node.js 18+
-- A monday.com account with the two boards imported
-- A Google AI Studio API key (free tier works)
+Follow these steps to run the complete application locally.
 
-### 1. Clone and set up Python env
+### Prerequisites
+- **Python 3.11+** installed (`python --version`)
+- **Node.js 18+** & npm (`node --version`)
+- A **monday.com API token** (read-only access) and board IDs for Deals and Work Orders
+- A **Google Gemini API key** (free tier from [Google AI Studio](https://aistudio.google.com/))
+
+---
+
+### Step 1: Clone the repository
 
 ```bash
 git clone https://github.com/AditthyaSS/Monday.com-Business-Intelligence-Agent.git
 cd Monday.com-Business-Intelligence-Agent
-
-python -m venv .venv
-# Windows:
-.venv\Scripts\pip install -r backend/requirements.txt
-# macOS/Linux:
-.venv/bin/pip install -r backend/requirements.txt
 ```
 
-### 2. Create `.env`
+---
 
-Copy `.env.example` to `.env` and fill in your values:
+### Step 2: Python environment & dependencies
+
+Create a virtual environment and install backend requirements:
+
+**Windows (PowerShell):**
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install --upgrade pip
+pip install -r backend/requirements.txt
+```
+
+**macOS / Linux (Bash):**
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install --upgrade pip
+pip install -r backend/requirements.txt
+```
+
+---
+
+### Step 3: Configure environment variables
+
+Copy `.env.example` to `.env` in the project root:
 
 ```bash
+# Windows:
+copy .env.example .env
+
+# macOS/Linux:
 cp .env.example .env
 ```
 
+Open `.env` and fill in your credentials:
+
 ```env
-MONDAY_API_TOKEN=your_monday_token_here
+# Required: Monday.com API Token & Board IDs
+MONDAY_API_TOKEN=your_monday_personal_access_token
 MONDAY_API_VERSION=2026-07
-DEALS_BOARD_ID=your_deals_board_id
-WORK_ORDERS_BOARD_ID=your_work_orders_board_id
+DEALS_BOARD_ID=your_deals_board_numeric_id
+WORK_ORDERS_BOARD_ID=your_work_orders_board_numeric_id
 
-GEMINI_API_KEY=your_gemini_key_here
-GEMINI_MODEL=gemini-2.0-flash-lite
+# Required: Google Gemini AI Key & Model
+GEMINI_API_KEY=your_google_ai_studio_key
+GEMINI_MODEL=gemini-2.5-flash
+
+# Optional Configuration (defaults are pre-configured)
+GLOBAL_LLM_CALLS_PER_DAY=16
+CACHE_TTL_SECONDS=300
+ANSWER_CACHE_TTL_SECONDS=21600
+LLM_DISABLED=0
 ```
 
-### 3. Run the backend
+> **Note on BYOK (Bring Your Own Key):**
+> If you don't wish to put your Gemini API key in the server `.env`, or if the shared daily quota is reached, you can also enter your personal key in the web application's **Settings** modal. The key is stored locally in your browser (`localStorage`) and sent as a request header.
 
-```bash
-# With AI enabled (requires Gemini key):
-cd backend
-../.venv/Scripts/uvicorn app.main:app --host 0.0.0.0 --port 8000
+---
 
-# Without AI (degraded mode - no Gemini calls):
-LLM_DISABLED=1 ../.venv/Scripts/uvicorn app.main:app --host 0.0.0.0 --port 8000
-```
+### Step 4: Build the frontend
 
-### 4. Build and run the frontend
+The frontend is built using React and Vite, and its production build is served directly by the FastAPI backend.
 
 ```bash
 cd frontend
 npm install
-npm run dev        # dev server with hot reload (port 5173)
-# OR
-npm run build      # production build → frontend/dist/
+npm run build
+cd ..
 ```
 
-Open http://localhost:5173 (dev) or http://localhost:8000 (served by FastAPI after build).
+*(Optional: For live frontend development with hot-reloading, you can run `npm run dev` in `frontend/` and access Vite at `http://localhost:5173`.)*
+
+---
+
+### Step 5: Start the backend server
+
+With your virtual environment activated, run:
+
+**Windows:**
+```powershell
+cd backend
+..\.venv\Scripts\uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
+```
+
+**macOS / Linux:**
+```bash
+cd backend
+../.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
+```
+
+Open **http://127.0.0.1:8000** in your browser.
+
+---
+
+### Step 6: Verify health & data connectivity
+
+Check the health endpoint in your terminal or browser:
+
+```bash
+curl http://127.0.0.1:8000/api/health
+# Returns: {"status":"ok"}
+
+curl http://127.0.0.1:8000/api/data-status
+# Returns live status of Deals and Work Orders boards with item counts and cache timestamps
+```
 
 ---
 
 ## Running tests
 
-```bash
-# From repo root:
-.venv/Scripts/python -m pytest backend/tests/ -q
+The test suite contains 53 automated unit and integration tests covering data cleaning, taxonomy normalization, Indian FY periods, analytics calculations, agent loops, error handling, and prompt injection defense.
 
-# Expected output:
-# 43 passed in 1.4s
+Tests use a deterministic `FakeProvider` — **zero live API or LLM calls are made during tests**.
+
+```bash
+# From repository root (Windows):
+.\.venv\Scripts\pytest -v
+
+# From repository root (macOS/Linux):
+.venv/bin/pytest -v
 ```
 
-Tests use `FakeProvider` — zero real LLM or monday.com calls. All tests are deterministic.
+Expected result:
+```
+======================= 53 passed, 3 warnings in 14.24s =======================
+```
 
-**Test coverage:**
-- `parse_number`, `parse_date` edge cases (blanks, suffixes, brackets)
-- Taxonomy: sector synonyms, status/stage conflict detection
-- Deals normalisation: junk exclusion, duplicate exclusion, flag detection
-- Period boundaries: Indian FY quarters
-- Analytics tools: pipeline counts, sector filter, concentration, no-data-in-period
-- Work order summary: GST basis, sector filter
-- Agent loop: 2-call flow, call cap enforcement, degraded mode, history trimming
-- Prompt injection: deal names containing instructions are treated as data
+**What the tests cover:**
+- **Parsers & Taxonomy:** Currency strings (`₹`, commas, lakhs, crores), dates (ISO, day-first), status/stage conflicts, sector synonyms (`taxonomy.py`).
+- **Data Normalization:** Header rows pasted into data, duplicate detection, missing value coverage tracking (`deals.py`, `workorders.py`).
+- **Analytics Calculations:** Open pipeline totals, quarter boundaries, win rates, billed vs. collected realization, GST derivation (`tools.py`).
+- **Error Handling & Fallbacks:** Monday 401/403/429/5xx handling, stale cache fallback with notice, Gemini 429 quota degradation, empty request validation (`test_error_handling.py`).
+- **Agent Execution:** 2-call loop limit, prompt injection defense, keyword-routed degraded execution (`test_core.py`).
 
 ---
 
@@ -305,7 +377,7 @@ Tests use `FakeProvider` — zero real LLM or monday.com calls. All tests are de
 | `DEALS_BOARD_ID` | Numeric board ID |
 | `WORK_ORDERS_BOARD_ID` | Numeric board ID |
 | `GEMINI_API_KEY` | Google AI Studio API key |
-| `GEMINI_MODEL` | e.g. `gemini-2.0-flash-lite` |
+| `GEMINI_MODEL` | e.g. `gemini-2.5-flash` |
 
 ### Optional variables (have safe defaults)
 
@@ -317,9 +389,9 @@ Tests use `FakeProvider` — zero real LLM or monday.com calls. All tests are de
 
 ### Quota notes
 
-- Free Gemini tier: ~200 requests/day
-- Each question uses 2 LLM calls → ~100 questions/day with AI narration
-- Beyond the daily budget: degraded mode kicks in automatically
+- Free Gemini tier: Daily request limits apply
+- Each question uses at most 2 LLM calls
+- Beyond the daily budget: deterministic degraded calculation mode answers automatically, or user can supply a key via BYOK
 - Same questions within 6 hours: served from cache (0 calls)
 
 ---
@@ -328,7 +400,7 @@ Tests use `FakeProvider` — zero real LLM or monday.com calls. All tests are de
 
 | Tool | Used for |
 |---|---|
-| **Antigravity (Google Deepmind)** | Sprint build: normalisation, analytics, LLM layer, agent loop, FastAPI API, React frontend, tests |
+| **Antigravity (Google Deepmind)** | Sprint build: normalisation, analytics, LLM layer, agent loop, error handling & graceful fallback suite, FastAPI API, React web client, BYOK integration, tests |
 | **Codex** | Phase 1: monday.com API client (sources/monday_api.py, tests) |
 | **Google AI Studio** | Manual testing of Gemini model tool-calling behaviour |
 
