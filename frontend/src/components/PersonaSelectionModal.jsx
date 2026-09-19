@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { EXECUTIVE_PERSONAS, getPersona } from './ExecutivePersonas.jsx'
 import { CheckIcon, FounderIcon, SkylarkDroneLogo } from './Icons.jsx'
 
@@ -13,6 +13,12 @@ export function PersonaSelectionModal({
   statusLoading,
 }) {
   const [selectedId, setSelectedId] = useState(currentPersonaId || 'pathfinder')
+
+  useEffect(() => {
+    if (currentPersonaId) {
+      setSelectedId(currentPersonaId)
+    }
+  }, [currentPersonaId, isOpen])
 
   if (!isOpen) return null
 
@@ -48,11 +54,9 @@ export function PersonaSelectionModal({
               </p>
             </div>
           </div>
-          {!isOnboarding && (
-            <button className="btn-modal-close" onClick={onClose} aria-label="Close modal">
-              ✕
-            </button>
-          )}
+          <button className="btn-modal-close" onClick={onClose} aria-label="Close modal">
+            ✕
+          </button>
         </div>
 
         <div className="modal-body">
@@ -156,7 +160,11 @@ export function PersonaSelectionModal({
             Character saved locally to your device. Switch anytime from the sidebar.
           </span>
           <div className="footer-right">
-            {!isOnboarding && (
+            {isOnboarding ? (
+              <button className="btn-modal-ghost" onClick={onClose}>
+                Skip for now
+              </button>
+            ) : (
               <button className="btn-modal-ghost" onClick={onClose}>
                 Cancel
               </button>

@@ -85,9 +85,7 @@ export default function App() {
     return localStorage.getItem('skylark_user_persona') || 'pathfinder'
   })
   const [isPersonaModalOpen, setIsPersonaModalOpen] = useState(false)
-  const [isOnboardingPersona, setIsOnboardingPersona] = useState(() => {
-    return !localStorage.getItem('skylark_has_onboarded')
-  })
+  const [isOnboardingPersona, setIsOnboardingPersona] = useState(true)
   const activePersona = getPersona(personaId)
 
   const chatBottomRef = useRef(null)
@@ -418,7 +416,7 @@ export default function App() {
 
           <div className="claude-top-brand">
             <SkylarkDroneLogo size={22} />
-            <span className="top-brand-text">Skylark Intelligence</span>
+            <span className="top-brand-text">Skylark BI</span>
             <span className="live-pill">LIVE BOARDS</span>
           </div>
 
@@ -650,13 +648,13 @@ export default function App() {
         onClose={() => {
           setIsPersonaModalOpen(false)
           setIsOnboardingPersona(false)
-          localStorage.setItem('skylark_has_onboarded', 'true')
+          sessionStorage.setItem('skylark_session_onboarded', 'true')
         }}
         currentPersonaId={personaId}
         onSelectPersona={(newId) => {
           setPersonaId(newId)
           localStorage.setItem('skylark_user_persona', newId)
-          localStorage.setItem('skylark_has_onboarded', 'true')
+          sessionStorage.setItem('skylark_session_onboarded', 'true')
           setIsOnboardingPersona(false)
         }}
         isOnboarding={isOnboardingPersona}
@@ -665,7 +663,7 @@ export default function App() {
         onLaunchPrompt={(prompt) => {
           setIsPersonaModalOpen(false)
           setIsOnboardingPersona(false)
-          localStorage.setItem('skylark_has_onboarded', 'true')
+          sessionStorage.setItem('skylark_session_onboarded', 'true')
           sendMessage(prompt)
         }}
       />

@@ -59,6 +59,15 @@ Newest entry at the top of "Session log". Keep "Current state" always up to date
   - All other typography remains on clean modern sans-serif (`Plus Jakarta Sans`) and monospace (`JetBrains Mono`).
 - All 53 unit tests passing. Vite bundle built and synced to `public/`.
 
+### Session Onboarding Trigger & Live Monday Telemetry (Antigravity, 2026-09-19)
+- Fixed onboarding flow to reliably trigger the Executive Character Selection modal upon visiting the site.
+- Connected modal with live Monday.com board telemetry displaying:
+  - Deals Board (328 total deals)
+  - Open Deals (47 open deals with active pipeline value)
+  - Work Orders (176 execution records)
+- Updated typography to use Google Font `Original Surfer` exclusively for the hero greeting ("Good evening, <Persona>") and brand headers ("Skylark BI").
+- Synchronized Vite production bundle to `public/` and verified clean test suite (53/53 passed).
+
 ### Session Executive Personas & BYOK Settings (Antigravity, 2026-09-19)
 - Transformed onboarding with interactive Executive Persona selection modal inspired by Icons8 Claude Hand-Drawn characters:
   - 6 bespoke hand-drawn vector SVG characters: `The Pathfinder` (Visionary Founder), `Eagle Eye` (Chief Flight Commander), `Deal Maestro` (Revenue & Growth Lead), `Terrain Whisperer` (Lead Geo-Scientist), `Sensor Wizard` (Autopilot Architect), and `Pit Surveyor` (Mining & Heavy Industry).
