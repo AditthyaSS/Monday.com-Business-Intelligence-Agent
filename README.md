@@ -400,7 +400,7 @@ Expected result:
 
 | Tool | Used for |
 |---|---|
-| **Antigravity (Google Deepmind)** | Sprint build: normalisation, analytics, LLM layer, agent loop, error handling & graceful fallback suite, FastAPI API, React web client, BYOK integration, tests |
+| **Antigravity** | Sprint build: normalisation, analytics, LLM layer, agent loop, error handling & graceful fallback suite, FastAPI API, React web client, BYOK integration, tests |
 | **Codex** | Phase 1: monday.com API client (sources/monday_api.py, tests) |
 | **Google AI Studio** | Manual testing of Gemini model tool-calling behaviour |
 
@@ -474,4 +474,4 @@ Implementation path: keep the existing `LLMProvider` and `ToolExecutor` seams; w
 
 ---
 
-*Built by Aditthya S — September 2026*
+*✨ Crafted with curiosity, code, and a little creative thinking by Aditthya SS Varma, for Skylark. 🪽  — September 2026*
