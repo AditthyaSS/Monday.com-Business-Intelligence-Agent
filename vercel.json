@@ -1,10 +1,6 @@
 {
-  "framework": null,
   "buildCommand": "cd frontend && npm install && npm run build && node -e \"const fs = require('fs'); fs.cpSync('dist', '../public', {recursive: true});\"",
   "rewrites": [
-    { "source": "/api/chat", "destination": "/api/chat" },
-    { "source": "/api/health", "destination": "/api/health" },
-    { "source": "/api/data-status", "destination": "/api/data_status" },
-    { "source": "/api/(.*)", "destination": "/api/$1" }
+    { "source": "/api/data-status", "destination": "/api/data_status" }
   ]
 }
