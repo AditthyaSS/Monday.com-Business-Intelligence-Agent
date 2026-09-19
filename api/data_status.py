@@ -1,13 +1,10 @@
 """Vercel serverless entry point for /api/data-status."""
 from __future__ import annotations
-
 import sys
 import os
 
-# Add backend/ to Python path
 _here = os.path.dirname(os.path.abspath(__file__))
-_backend = os.path.normpath(os.path.join(_here, "..", "backend"))
-if _backend not in sys.path:
-    sys.path.insert(0, _backend)
+if _here not in sys.path:
+    sys.path.insert(0, _here)
 
-from app.main import app  # noqa: F401
+from index import app  # noqa: F401

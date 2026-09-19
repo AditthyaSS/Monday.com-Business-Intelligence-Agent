@@ -45,12 +45,12 @@ class Settings(BaseSettings):
     )
 
     monday_api_token: str = Field(
-        min_length=1,
+        default="",
         validation_alias=AliasChoices("MONDAY_API_TOKEN", "MONDAY_API_KEY"),
     )
-    monday_api_version: str = Field(min_length=1)
-    gemini_api_key: str = Field(min_length=1)
-    gemini_model: str = Field(min_length=1)
+    monday_api_version: str = Field(default="2024-01")
+    gemini_api_key: str = Field(default="")
+    gemini_model: str = Field(default="gemini-2.5-flash")
     gemini_fallback_model: str | None = None
     deals_board_id: str | None = None
     work_orders_board_id: str | None = None
