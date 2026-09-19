@@ -1,13 +1,14 @@
-"""Vercel serverless entry point.
-
-Adds backend/ to sys.path and exports the FastAPI app as `app`.
-No startup work, no threads, no file writes outside /tmp.
-"""
+"""Vercel serverless entry point."""
 
 import sys
 import os
 
-# Make the backend package importable in Vercel's serverless environment
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "backend"))
+# Vercel runs functions from the repo root. Add backend/ to path.
+_here = os.path.dirname(os.path.abspath(__file__))
+_backend = os.path.join(_here, "..", "backend")
+_backend = os.path.normpath(_backend)
 
-from app.main import app  # noqa: F401  (Vercel picks up `app` by name)
+if _backend not in sys.path:
+    sys.path.insert(0, _backend)
+
+from app.main import app  # noqa: F401
