@@ -1,0 +1,20 @@
+# Secrets - NEVER commit
+.env
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Node / frontend
+node_modules/
+dist/
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/
+
+# Company-provided raw spreadsheets (kept locally; import them into monday.com, the app never reads them)
+data/
