@@ -212,11 +212,13 @@ def _error_response(code: str, message: str, status: int, extra: dict | None = N
 # ---------------------------------------------------------------------------
 
 @app.get("/api/health")
+@app.get("/health")
 def health() -> dict:
     return {"status": "ok"}
 
 
 @app.get("/api/data-status")
+@app.get("/data-status")
 def data_status() -> dict:
     _reset_daily_counter()
     try:
@@ -265,6 +267,7 @@ def data_status() -> dict:
 
 
 @app.post("/api/chat")
+@app.post("/chat")
 def chat(request: Request, body: ChatRequest) -> dict:
     ip = _get_client_ip(request)
     try:
