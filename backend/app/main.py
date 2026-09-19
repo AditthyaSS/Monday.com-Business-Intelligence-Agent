@@ -431,36 +431,36 @@ def chat(request: Request, body: ChatRequest) -> Any:
         if time.monotonic() - cached_at < settings.answer_cache_ttl_seconds:
             return cached_answer
 
-    # Budget check
+    # Budget check & BYOK (Bring Your Own Key)
     _reset_daily_counter()
-    use_degraded = _llm_disabled() or not _budget_ok()
+    custom_gemini_key = (request.headers.get("x-custom-gemini-key") or "").strip()
+    has_byok = bool(custom_gemini_key)
+    budget_ok = _budget_ok() or has_byok
+    use_degraded = _llm_disabled() or not budget_ok
     llm: GeminiProvider | None = None
     fallback_prefix: str | None = None
 
     if _llm_disabled():
         use_degraded = True
-    elif not _budget_ok():
+    elif not budget_ok:
         use_degraded = True
         fallback_prefix = (
-            "⚠️ AI narration is temporarily unavailable because the AI service has reached its current usage limit. "
-            "I'm showing the computed result directly from the Monday.com data."
+            "💤 My AI brain needs a short recharge. AI narration is unavailable for now, but I've still calculated the numbers for you."
         )
     else:
         try:
-            llm = GeminiProvider(settings)
+            llm = GeminiProvider(settings, api_key_override=custom_gemini_key if has_byok else None)
         except LLMAuthError:
             logger.warning("GeminiProvider init auth failure; falling back to degraded mode")
             use_degraded = True
             fallback_prefix = (
-                "⚠️ AI narration is unavailable because the AI service connection needs attention. "
-                "I'm showing the computed result directly from the Monday.com data."
+                "🔑 My AI connection needs a little attention. I'll keep working with the available data while the connection is fixed."
             )
         except Exception as exc:
             logger.warning("GeminiProvider init error: %s; falling back to degraded mode", exc)
             use_degraded = True
             fallback_prefix = (
-                "⚠️ AI narration is temporarily unavailable. "
-                "I'm showing the computed result directly from the Monday.com data."
+                "🔌 My AI reasoning service is temporarily offline. I'm switching to computed results so the work can continue."
             )
 
     executor = ToolExecutor(
@@ -493,7 +493,8 @@ def chat(request: Request, body: ChatRequest) -> Any:
             status=500,
         )
 
-    _inc_llm_calls(result.llm_calls)
+    if not has_byok:
+        _inc_llm_calls(result.llm_calls)
 
     # If data came from cache, append notice and caveat
     dao = _data_as_of() or "unknown"
@@ -519,6 +520,10 @@ def chat(request: Request, body: ChatRequest) -> Any:
         "llm_calls": result.llm_calls,
         "model_used": result.model_used,
         "degraded": result.degraded,
+        "byok_active": has_byok,
+        "llm_calls_today": _llm_calls_today,
+        "llm_daily_budget": settings.global_llm_calls_per_day,
+        "calls_remaining": max(0, settings.global_llm_calls_per_day - _llm_calls_today),
     }
 
     # Cache answer

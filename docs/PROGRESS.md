@@ -49,6 +49,18 @@ Newest entry at the top of "Session log". Keep "Current state" always up to date
 - Per-instance in-memory state: rate limits, LLM call counter, answer cache, data cache are all in-memory and reset on Vercel cold start. This is documented (see DECISIONS.md D_SPRINT).
 
 ## Session log
+### Session Executive Personas & BYOK Settings (Antigravity, 2026-09-19)
+- Transformed onboarding with interactive Executive Persona selection modal inspired by Icons8 Claude Hand-Drawn characters:
+  - 6 bespoke hand-drawn vector SVG characters: `The Pathfinder` (Visionary Founder), `Eagle Eye` (Chief Flight Commander), `Deal Maestro` (Revenue & Growth Lead), `Terrain Whisperer` (Lead Geo-Scientist), `Sensor Wizard` (Autopilot Architect), and `Pit Surveyor` (Mining & Heavy Industry).
+  - Selected persona persists in client `localStorage`, dynamically branding the bottom-left sidebar account pill, top bar, hero greeting, and user message avatar badges.
+- Implemented Bring Your Own Key (BYOK) architecture:
+  - Settings modal with Gemini API key input stored exclusively in browser `localStorage` (`skylark_custom_gemini_key`).
+  - Seamlessly transmitted via `X-Custom-Gemini-Key` header when shared daily free quota (16 calls) is exhausted, or when configured to always use personal key.
+  - Backend dynamically uses the caller's key without burning shared system quota.
+- Added live AI Token Usage and Daily API Requests meter (`<n>/16 left`) in sidebar and top header.
+- Replaced all remaining emojis with bespoke vector SVGs across messages, headers, status strips, and trace panels.
+- Production bundle compiled with Vite and synced to `public/`. All 53 unit tests passing.
+
 ### Session Claude UI & Situational Error Handling (Antigravity, 2026-09-19)
 - Redesigned the entire frontend into a Claude-inspired interface matching user reference:
   - Collapsible left sidebar with `+ New chat`, navigation links, pinned queries, chat history, and founder profile.

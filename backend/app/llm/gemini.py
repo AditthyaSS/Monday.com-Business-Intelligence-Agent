@@ -59,9 +59,10 @@ def _to_sdk_messages(messages: list[LLMMessage]) -> list[dict[str, Any]]:
 class GeminiProvider:
     """Wraps google-genai Client for use by the agent loop."""
 
-    def __init__(self, settings: Settings, sleep=time.sleep, random_fn=random.random) -> None:
+    def __init__(self, settings: Settings, sleep=time.sleep, random_fn=random.random, api_key_override: str | None = None) -> None:
         self.settings = settings
-        self._client = genai.Client(api_key=settings.gemini_api_key)
+        key = (api_key_override or "").strip() or settings.gemini_api_key
+        self._client = genai.Client(api_key=key)
         self._sleep = sleep
         self._random = random_fn
         self._model = settings.gemini_model

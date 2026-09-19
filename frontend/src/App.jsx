@@ -3,13 +3,23 @@ import { StatusStrip } from './components/StatusStrip.jsx'
 import { UserMessage, AssistantMessage } from './components/Message.jsx'
 import { LoadingMessage } from './components/LoadingMessage.jsx'
 import { ErrorCard } from './components/ErrorCard.jsx'
+import { SettingsModal } from './components/SettingsModal.jsx'
+import { OnboardingGuideModal } from './components/OnboardingGuideModal.jsx'
+import { PersonaSelectionModal } from './components/PersonaSelectionModal.jsx'
+import { getPersona, PersonaAvatar } from './components/ExecutivePersonas.jsx'
 import {
-  ClaudeLogo,
-  HandDrawnWrite,
-  HandDrawnLearn,
-  HandDrawnCode,
-  HandDrawnCoffee,
-  HandDrawnBulb,
+  SkylarkDroneLogo,
+  SkylarkChatbotIcon,
+  FounderIcon,
+  PipelineIcon,
+  EnergyIcon,
+  WinRateIcon,
+  RevenueIcon,
+  BriefingIcon,
+  GearIcon,
+  GuideIcon,
+  KeyIcon,
+  DatabaseIcon,
   HandDrawnPlus,
   HandDrawnMic,
   HandDrawnWaveform,
@@ -21,36 +31,36 @@ const MAX_CHARS = 1000
 const MAX_HISTORY = 8
 const ABORT_MS = 90000
 
-// Claude prompt chips matching screenshot style
-const CLAUDE_PROMPTS = [
+// Domain prompt chips for Skylark Drones BI
+const DOMAIN_PROMPTS = [
   {
-    icon: <HandDrawnWrite size={15} />,
-    label: 'Pipeline Health',
-    tag: 'Write',
+    icon: <PipelineIcon size={15} />,
+    label: 'Open Pipeline',
+    tag: 'Pipeline',
     query: "How's our open pipeline looking overall?",
   },
   {
-    icon: <HandDrawnLearn size={15} />,
-    label: 'Energy Sector',
-    tag: 'Learn',
+    icon: <EnergyIcon size={15} />,
+    label: 'Energy Sector Q3/Q4',
+    tag: 'Energy',
     query: "How's our pipeline looking for the energy sector this quarter?",
   },
   {
-    icon: <HandDrawnCode size={15} />,
-    label: 'Win Rate Analysis',
-    tag: 'Code',
+    icon: <WinRateIcon size={15} />,
+    label: 'Win Rate by Sector',
+    tag: 'Win Rates',
     query: "What's our win rate by sector?",
   },
   {
-    icon: <HandDrawnCoffee size={15} />,
+    icon: <RevenueIcon size={15} />,
     label: 'Mining Billed vs Collected',
-    tag: 'Life stuff',
+    tag: 'Collections',
     query: "How much have we billed versus collected on mining work orders?",
   },
   {
-    icon: <HandDrawnBulb size={15} />,
-    label: 'Leadership Update',
-    tag: "Claude's choice",
+    icon: <BriefingIcon size={15} />,
+    label: 'Executive Leadership Brief',
+    tag: 'Briefing',
     query: "Prepare a leadership update",
   },
 ]
@@ -66,6 +76,19 @@ export default function App() {
   const [statusError, setStatusError] = useState(null)
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [showStatusStrip, setShowStatusStrip] = useState(false)
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false)
+  const [isGuideOpen, setIsGuideOpen] = useState(false)
+  const [byokKey, setByokKey] = useState('')
+
+  // Executive Character Persona state
+  const [personaId, setPersonaId] = useState(() => {
+    return localStorage.getItem('skylark_user_persona') || 'pathfinder'
+  })
+  const [isPersonaModalOpen, setIsPersonaModalOpen] = useState(false)
+  const [isOnboardingPersona, setIsOnboardingPersona] = useState(() => {
+    return !localStorage.getItem('skylark_has_onboarded')
+  })
+  const activePersona = getPersona(personaId)
 
   const chatBottomRef = useRef(null)
   const textareaRef = useRef(null)
@@ -73,15 +96,23 @@ export default function App() {
   const retryTimerRef = useRef(null)
   const [retryCountdown, setRetryCountdown] = useState(0)
 
-  // Dynamic greeting based on time of day (matching Claude: "Evening, how are things?")
+  // Initialize BYOK from localStorage
+  useEffect(() => {
+    const stored = localStorage.getItem('skylark_custom_gemini_key') || ''
+    setByokKey(stored)
+  }, [])
+
+  // Dynamic greeting based on time of day and executive persona
   const getGreeting = () => {
     const hour = new Date().getHours()
-    if (hour < 12) return 'Morning, how are things?'
-    if (hour < 17) return 'Afternoon, how are things?'
-    return 'Evening, how are things?'
+    let timeStr = 'Good morning'
+    if (hour >= 12 && hour < 17) timeStr = 'Good afternoon'
+    else if (hour >= 17) timeStr = 'Good evening'
+    return `${timeStr}, ${activePersona.name}`
   }
 
-  // Load live telemetry
+
+  // Load telemetry from server
   const fetchStatus = useCallback(async () => {
     try {
       const res = await fetch('/api/data-status')
@@ -100,12 +131,12 @@ export default function App() {
     fetchStatus()
   }, [fetchStatus])
 
-  // Auto-scroll on new messages
+  // Auto-scroll
   useEffect(() => {
     chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages, loading, error])
 
-  // Auto-resize textarea height
+  // Auto-resize textarea
   useEffect(() => {
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto'
@@ -149,9 +180,15 @@ export default function App() {
       }, ABORT_MS)
 
       try {
+        const headers = { 'Content-Type': 'application/json' }
+        const activeKey = localStorage.getItem('skylark_custom_gemini_key') || ''
+        if (activeKey.trim()) {
+          headers['X-Custom-Gemini-Key'] = activeKey.trim()
+        }
+
         const res = await fetch('/api/chat', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers,
           body: JSON.stringify(payload),
           signal: controller.signal,
         })
@@ -167,7 +204,6 @@ export default function App() {
             data = null
           }
         } else {
-          // HTML edge response (404/502)
           data = {
             error: {
               code: res.status === 404 ? 'GATEWAY_404' : 'SERVER_ERROR',
@@ -257,15 +293,16 @@ export default function App() {
   }
 
   const isEmpty = messages.length === 0 && !loading
+  const callsRemaining = status ? Math.max(0, status.llm_daily_budget - status.llm_calls_today) : 16
 
   return (
     <div className="claude-app-container">
-      {/* Left Claude-Inspired Sidebar */}
+      {/* Left Sidebar — Skylark BI Style */}
       <aside className={`claude-sidebar ${sidebarOpen ? 'open' : 'collapsed'}`}>
         <div className="sidebar-header">
           <div className="sidebar-brand">
-            <ClaudeLogo size={24} />
-            <span className="sidebar-title">Claude</span>
+            <SkylarkDroneLogo size={26} />
+            <span className="sidebar-title">Skylark BI</span>
           </div>
           <button
             className="sidebar-toggle-btn"
@@ -279,46 +316,63 @@ export default function App() {
 
         <button className="btn-new-chat" onClick={handleClearSession} disabled={loading}>
           <HandDrawnPlus size={16} />
-          <span>New chat</span>
+          <span>New Briefing</span>
         </button>
 
+        {/* Practical Navigation Actions */}
         <div className="sidebar-nav-section">
-          <div className="sidebar-nav-item">
-            <span className="nav-icon">📁</span>
-            <span>Projects</span>
+          <div className="sidebar-nav-item" onClick={() => setIsPersonaModalOpen(true)}>
+            <span className="nav-icon"><PersonaAvatar id={personaId} size={16} /></span>
+            <span>Character: {activePersona.name}</span>
           </div>
-          <div className="sidebar-nav-item">
-            <span className="nav-icon">📄</span>
-            <span>Artifacts</span>
+
+          <div className="sidebar-nav-item" onClick={() => setIsGuideOpen(true)}>
+            <span className="nav-icon"><GuideIcon size={16} /></span>
+            <span>Architecture & Guide</span>
           </div>
-          <div className="sidebar-nav-item">
-            <span className="nav-icon">&lt;/&gt;</span>
-            <span>Code</span>
-            <span className="upgrade-pill">Upgrade</span>
+
+          <div className="sidebar-nav-item" onClick={() => setIsSettingsOpen(true)}>
+            <span className="nav-icon"><GearIcon size={16} /></span>
+            <span>Settings & BYOK</span>
+            {byokKey && <span className="byok-active-tag">BYOK</span>}
           </div>
-          <div className="sidebar-nav-item">
-            <span className="nav-icon">⚙️</span>
-            <span>Customize</span>
+
+          <div className="sidebar-nav-item" onClick={() => setShowStatusStrip(!showStatusStrip)}>
+            <span className="nav-icon"><DatabaseIcon size={16} /></span>
+            <span>Data & Telemetry</span>
           </div>
         </div>
 
-        <div className="sidebar-section-title">Pinned</div>
+        {/* Real-time Token & API Budget Telemetry Meter */}
+        <div className="sidebar-quota-box">
+          <div className="quota-meter-header">
+            <span className="quota-meter-title">Daily AI Quota</span>
+            <span className="quota-meter-count">{callsRemaining}/16 left</span>
+          </div>
+          <div className="quota-meter-bar">
+            <div
+              className="quota-meter-fill"
+              style={{ width: `${Math.min(100, (callsRemaining / 16) * 100)}%` }}
+            />
+          </div>
+          <span className="quota-meter-hint">
+            {byokKey ? 'BYOK Key Active (Bypasses Quota)' : 'Resets at midnight UTC'}
+          </span>
+        </div>
+
+        <div className="sidebar-section-title">Saved Briefings</div>
         <div className="sidebar-history-list">
+          <div className="history-item" onClick={() => sendMessage("How's our open pipeline looking overall?")}>
+            <span className="history-bullet">•</span>
+            <span className="history-text">Overall Pipeline Health</span>
+          </div>
           <div className="history-item" onClick={() => sendMessage("How's our pipeline looking for the energy sector this quarter?")}>
             <span className="history-bullet">•</span>
             <span className="history-text">Energy Sector Q3/Q4</span>
           </div>
-          <div className="history-item" onClick={() => sendMessage("How's our open pipeline looking overall?")}>
-            <span className="history-bullet">•</span>
-            <span className="history-text">Pipeline Health Q3</span>
-          </div>
-        </div>
-
-        <div className="sidebar-section-title">Chats and tasks</div>
-        <div className="sidebar-history-list">
           <div className="history-item" onClick={() => sendMessage("What's our win rate by sector?")}>
             <span className="history-bullet">•</span>
-            <span className="history-text">Win rate by sector</span>
+            <span className="history-text">Win Rate Analysis</span>
           </div>
           <div className="history-item" onClick={() => sendMessage("How much have we billed versus collected on mining work orders?")}>
             <span className="history-bullet">•</span>
@@ -326,16 +380,22 @@ export default function App() {
           </div>
           <div className="history-item" onClick={() => sendMessage("Prepare a leadership update")}>
             <span className="history-bullet">•</span>
-            <span className="history-text">Leadership briefing</span>
+            <span className="history-text">Executive Leadership Update</span>
           </div>
         </div>
 
         <div className="sidebar-footer">
-          <div className="sidebar-user-pill">
-            <span className="user-avatar-initial">A</span>
+          <div
+            className="sidebar-user-pill"
+            onClick={() => setIsPersonaModalOpen(true)}
+            title="Click to switch your executive character"
+          >
+            <div className="founder-icon-wrapper">
+              <PersonaAvatar id={personaId} size={28} />
+            </div>
             <div className="user-info-text">
-              <span className="user-name">Aditthya</span>
-              <span className="user-plan">Founder • Skylark Drones</span>
+              <span className="user-name">{activePersona.name}</span>
+              <span className="user-plan">{activePersona.role}</span>
             </div>
           </div>
         </div>
@@ -357,21 +417,40 @@ export default function App() {
           )}
 
           <div className="claude-top-brand">
-            <ClaudeLogo size={20} />
-            <span className="top-brand-text">Skylark BI Agent</span>
+            <SkylarkDroneLogo size={22} />
+            <span className="top-brand-text">Skylark Intelligence</span>
             <span className="live-pill">LIVE BOARDS</span>
           </div>
 
           <div className="claude-top-right">
             <button
-              className="telemetry-pill-btn"
-              onClick={() => setShowStatusStrip(!showStatusStrip)}
-              title="Toggle Telemetry Audit Drawer"
+              className="telemetry-pill-btn persona-pill"
+              onClick={() => setIsPersonaModalOpen(true)}
+              title="Switch Executive Character"
             >
-              <span className="beacon-dot" />
-              <span>Telemetry</span>
+              <PersonaAvatar id={personaId} size={16} />
+              <span>{activePersona.name}</span>
             </button>
-            <span className="free-plan-tag">Read-Only • Monday.com</span>
+
+            <button
+              className="telemetry-pill-btn"
+              onClick={() => setIsSettingsOpen(true)}
+              title="Configure BYOK API Key"
+            >
+              <KeyIcon size={14} />
+              <span>{byokKey ? 'BYOK Active' : 'BYOK Key'}</span>
+            </button>
+
+            <button
+              className="telemetry-pill-btn"
+              onClick={() => setIsGuideOpen(true)}
+              title="Architecture & Onboarding Guide"
+            >
+              <GuideIcon size={14} />
+              <span>Guide</span>
+            </button>
+
+            <span className="free-plan-tag">{callsRemaining}/16 Requests Left</span>
           </div>
         </header>
 
@@ -382,14 +461,24 @@ export default function App() {
         {/* Scrollable Conversation Stream */}
         <main className="claude-chat-scroll" id="claude-chat-container">
           {isEmpty ? (
-            /* Claude Hero State matching user screenshot */
+            /* Claude-Inspired Skylark Hero View */
             <div className="claude-hero-container">
               <div className="claude-greeting-heading">
-                <ClaudeLogo size={36} className="hero-starburst" />
+                <SkylarkDroneLogo size={42} className="hero-starburst" />
                 <h1 className="greeting-text">{getGreeting()}</h1>
+                <div
+                  className="persona-hero-badge"
+                  onClick={() => setIsPersonaModalOpen(true)}
+                  title="Click to switch executive character"
+                >
+                  <PersonaAvatar id={personaId} size={18} />
+                  <span className="persona-badge-role">{activePersona.role}</span>
+                  <span className="persona-badge-dot">•</span>
+                  <span className="persona-badge-switch">Switch Character ↻</span>
+                </div>
               </div>
 
-              {/* Centered Claude Input Box Capsule */}
+              {/* Centered Floating Capsule */}
               <div className="claude-input-capsule">
                 <textarea
                   ref={textareaRef}
@@ -398,42 +487,36 @@ export default function App() {
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
                   onKeyDown={handleKeyDown}
-                  placeholder="How can I help you today?"
+                  placeholder="How can I help you analyze Deals & Work Orders today?"
                   disabled={loading}
                   maxLength={MAX_CHARS + 50}
-                  rows={1}
-                  aria-label="Chat input"
+                  rows={2}
+                  aria-label="Ask Skylark BI agent"
                 />
 
                 <div className="claude-capsule-toolbar">
                   <div className="toolbar-left">
-                    <button className="capsule-icon-btn" title="Add context">
-                      <HandDrawnPlus size={16} />
+                    <button
+                      className="capsule-icon-btn"
+                      onClick={() => setIsSettingsOpen(true)}
+                      title="Settings & BYOK"
+                    >
+                      <GearIcon size={16} />
                     </button>
-                    <div className="mode-toggle-group">
-                      <span className="mode-tab active">Chat</span>
-                      <span className="mode-tab">Cowork</span>
-                    </div>
+                    <span className="model-selector-pill">
+                      {byokKey ? 'Gemini (BYOK)' : 'Gemini 3.5 Flash'}
+                    </span>
                   </div>
 
                   <div className="toolbar-right">
-                    <span className="model-selector-pill">
-                      Sonnet 3.5
-                      <span className="pill-arrow">▾</span>
+                    <span className="char-count-minimal">
+                      {input.length}/{MAX_CHARS}
                     </span>
-                    <button className="capsule-icon-btn" title="Voice dictation">
-                      <HandDrawnMic size={16} />
-                    </button>
-                    <button className="capsule-icon-btn" title="Voice response">
-                      <HandDrawnWaveform size={16} />
-                    </button>
                     <button
-                      id="send-btn"
                       className={`claude-send-btn ${input.trim() && !loading ? 'ready' : ''}`}
                       onClick={() => sendMessage(input)}
                       disabled={loading || !input.trim() || input.length > MAX_CHARS}
                       title="Send message"
-                      aria-label="Send message"
                     >
                       <HandDrawnSend size={16} />
                     </button>
@@ -441,9 +524,9 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Claude Prompt Suggestion Pills */}
+              {/* Domain Specific Prompt Chips */}
               <div className="claude-chips-row">
-                {CLAUDE_PROMPTS.map((p, idx) => (
+                {DOMAIN_PROMPTS.map((p, idx) => (
                   <button
                     key={idx}
                     className="claude-prompt-pill"
@@ -458,11 +541,11 @@ export default function App() {
               </div>
             </div>
           ) : (
-            /* Active Message List */
+            /* Active Message Thread */
             <div className="claude-messages-wrapper">
               {messages.map((m, idx) =>
                 m.role === 'user' ? (
-                  <UserMessage key={idx} msg={m} />
+                  <UserMessage key={idx} msg={m} personaId={personaId} />
                 ) : (
                   <AssistantMessage
                     key={idx}
@@ -477,7 +560,6 @@ export default function App() {
 
               {loading && <LoadingMessage startTime={loadingStart} />}
 
-              {/* Error card with situation message and Lottie animation */}
               {error && (
                 <ErrorCard
                   error={error}
@@ -495,7 +577,7 @@ export default function App() {
           )}
         </main>
 
-        {/* Floating Bottom Input when chat has active messages */}
+        {/* Floating Bottom Dock (In Active Chat) */}
         {!isEmpty && (
           <div className="claude-bottom-dock">
             <div className="claude-input-capsule in-chat">
@@ -514,11 +596,15 @@ export default function App() {
 
               <div className="claude-capsule-toolbar">
                 <div className="toolbar-left">
-                  <button className="capsule-icon-btn" title="Add context">
-                    <HandDrawnPlus size={16} />
+                  <button
+                    className="capsule-icon-btn"
+                    onClick={() => setIsSettingsOpen(true)}
+                    title="Settings & BYOK"
+                  >
+                    <GearIcon size={16} />
                   </button>
                   <span className="model-selector-pill in-chat">
-                    Sonnet 3.5 Medium
+                    {byokKey ? 'Gemini (BYOK)' : 'Gemini 3.5 Flash'}
                   </span>
                 </div>
 
@@ -540,6 +626,45 @@ export default function App() {
           </div>
         )}
       </div>
+
+      {/* Settings & BYOK Modal */}
+      <SettingsModal
+        isOpen={isSettingsOpen}
+        onClose={() => setIsSettingsOpen(false)}
+        telemetry={status}
+        onKeyUpdated={(k) => setByokKey(k)}
+      />
+
+      {/* Onboarding Architecture Guide Modal */}
+      <OnboardingGuideModal
+        isOpen={isGuideOpen}
+        onClose={() => setIsGuideOpen(false)}
+        onSelectPrompt={(q) => sendMessage(q)}
+      />
+
+      {/* Executive Character Persona Selection Modal */}
+      <PersonaSelectionModal
+        isOpen={isPersonaModalOpen || isOnboardingPersona}
+        onClose={() => {
+          setIsPersonaModalOpen(false)
+          setIsOnboardingPersona(false)
+          localStorage.setItem('skylark_has_onboarded', 'true')
+        }}
+        currentPersonaId={personaId}
+        onSelectPersona={(newId) => {
+          setPersonaId(newId)
+          localStorage.setItem('skylark_user_persona', newId)
+          localStorage.setItem('skylark_has_onboarded', 'true')
+          setIsOnboardingPersona(false)
+        }}
+        isOnboarding={isOnboardingPersona}
+        onLaunchPrompt={(prompt) => {
+          setIsPersonaModalOpen(false)
+          setIsOnboardingPersona(false)
+          localStorage.setItem('skylark_has_onboarded', 'true')
+          sendMessage(prompt)
+        }}
+      />
     </div>
   )
 }

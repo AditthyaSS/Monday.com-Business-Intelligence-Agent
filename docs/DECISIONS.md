@@ -40,9 +40,20 @@ top risks, sector highlights and data caveats in a paste-ready format, on reques
 
 **D10. Structured user-facing error handling and graceful fallbacks.** Never expose raw stack traces, exceptions, GraphQL errors, or API credentials to the client. External API failures are classified into user-friendly responses:
 - Monday.com unavailable / network / 5xx / 429: Fall back to stale cached board data if present, prominently displaying `Data last refreshed: <timestamp>`. If no cache exists, return clear HTTP status (502, 503, 429) with structured error payload `{error: {code, message, user_message, retry_after_seconds}}`.
-- Gemini API errors (429 quota, auth/config, timeout): Immediately degrade to deterministic tool computation on live Monday data with prominent explanatory banner (e.g. `⚠️ AI narration is temporarily unavailable because the AI service has reached its current usage limit. I'm showing the computed result directly from the Monday.com data.`).
+- Gemini API errors (429 quota, auth/config, timeout): Immediately degrade to deterministic tool computation on live Monday data with prominent explanatory banner.
 - HTTP status codes: 400 for bad user requests, 429 for rate limits, 502/503 for upstream outages, 500 for unexpected internal errors (logged server-side only).
 - Frontend preserves chat state, renders inline error cards, displays retry countdowns for 429, and provides retry actions.
+
+**D11. Bring Your Own Key (BYOK) Client-Controlled Model Access.** When the server's shared daily quota (16 calls) is exhausted, users can provide their personal Gemini API key in the client Settings modal.
+- Keys are stored strictly in client-side `localStorage` (`skylark_custom_gemini_key`) and never written to server logs, files, or persistent storage.
+- Transmitted as a custom header `X-Custom-Gemini-Key` per request.
+- When an override key is present, queries bypass the shared daily budget limit and execute normally without incrementing the public counter.
+
+**D12. Executive Persona Character Onboarding.** Interactive character onboarding inspired by the Icons8 Claude Hand-Drawn style:
+- 6 curated executive personas tailored to Skylark Drones operations (`The Pathfinder`, `Eagle Eye`, `Deal Maestro`, `Terrain Whisperer`, `Sensor Wizard`, `Pit Surveyor`).
+- Rendered via 100% vector SVGs with charming organic linework (zero raster images, zero emojis).
+- Selected persona dynamically brands the account pill, greeting hero, and user chat avatars.
+
 
 ## Data-handling assumptions (proposed defaults)
 - A1. Currency INR; amounts excluding GST by default; state this in answers. Including-GST available on request.

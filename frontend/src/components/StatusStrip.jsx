@@ -1,4 +1,13 @@
 import React, { useState } from 'react'
+import {
+  PipelineIcon,
+  BriefingIcon,
+  ClockIcon,
+  KeyIcon,
+  ShieldIcon,
+  WarningIcon,
+  DatabaseIcon,
+} from './Icons.jsx'
 
 export function StatusStrip({ status, loading, error }) {
   const [expanded, setExpanded] = useState(false)
@@ -12,7 +21,7 @@ export function StatusStrip({ status, loading, error }) {
               <span className="beacon-dot" style={{ backgroundColor: '#a5b4fc', boxShadow: 'none' }} />
               CONNECTING TO MONDAY.COM
             </span>
-            <span style={{ fontSize: '0.78rem', color: 'var(--text-tertiary)' }}>Syncing live boards…</span>
+            <span style={{ fontSize: '0.78rem', color: 'var(--claude-text-tertiary)' }}>Syncing live boards…</span>
           </div>
         </div>
       </div>
@@ -22,10 +31,12 @@ export function StatusStrip({ status, loading, error }) {
   if (error) {
     return (
       <div className="status-strip-wrapper">
-        <div className="status-strip" style={{ borderColor: 'rgba(239, 68, 68, 0.4)', background: 'rgba(220, 38, 38, 0.1)' }}>
+        <div className="status-strip" style={{ borderColor: 'rgba(239, 68, 68, 0.4)', background: '#FEF2F2' }}>
           <div className="status-row">
-            <span style={{ color: '#fca5a5', fontWeight: 600 }}>⚠️ Connection notice:</span>
-            <span style={{ color: '#fecaca', fontSize: '0.8rem' }}>{error}</span>
+            <span style={{ color: '#DC2626', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+              <WarningIcon size={14} /> Connection notice:
+            </span>
+            <span style={{ color: '#991B1B', fontSize: '0.8rem' }}>{error}</span>
           </div>
         </div>
       </div>
@@ -48,7 +59,7 @@ export function StatusStrip({ status, loading, error }) {
     <div className="status-strip-wrapper">
       {isStale && (
         <div className="stale-banner" role="alert">
-          <span>⚠️</span>
+          <WarningIcon size={16} />
           <div>
             <strong>Historical / Snapshot Data Notice:</strong> Most recent board record is dated{' '}
             <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 600 }}>{dao || 'unknown'}</span>.
@@ -59,12 +70,12 @@ export function StatusStrip({ status, loading, error }) {
 
       <div
         className="status-strip"
-        onClick={() => setExpanded(e => !e)}
+        onClick={() => setExpanded((e) => !e)}
         role="button"
         tabIndex={0}
         aria-expanded={expanded}
         aria-label="System telemetry and data quality audit — click to toggle details"
-        onKeyDown={e => (e.key === 'Enter' || e.key === ' ') && setExpanded(e => !e)}
+        onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && setExpanded((e) => !e)}
       >
         <div className="status-row">
           <div className="telemetry-beacon">
@@ -73,77 +84,85 @@ export function StatusStrip({ status, loading, error }) {
           </div>
 
           <div className="telemetry-metric">
-            <span>📊 Deals:</span>
+            <PipelineIcon size={14} />
+            <span>Deals:</span>
             <strong>{status.deals_rows}</strong>
           </div>
 
           <div className="telemetry-metric">
-            <span>📑 Work Orders:</span>
+            <BriefingIcon size={14} />
+            <span>Work Orders:</span>
             <strong>{status.work_orders_rows}</strong>
           </div>
 
           {dao && (
             <div className="telemetry-metric">
-              <span>🕒 As of:</span>
+              <ClockIcon size={14} />
+              <span>As of:</span>
               <strong>{dao}</strong>
             </div>
           )}
 
           <span className={`status-pill ${aiLeft > 5 ? 'pill-ok' : aiLeft > 0 ? 'pill-warn' : 'pill-error'}`}>
-            ⚡ AI Quota: {aiLeft} left
+            <KeyIcon size={12} /> AI Quota: {aiLeft} left
           </span>
 
           {status.degraded && (
             <span className="status-pill pill-warn">
-              ⚡ Degraded Engine
+              <ShieldIcon size={12} /> Degraded Engine
             </span>
           )}
 
-          {status.stale_cache && (
-            <span className="status-pill pill-warn">
-              📦 Cached
-            </span>
-          )}
-
-          <div className="status-expand-icon">
-            <span style={{ fontSize: '0.74rem', marginRight: 4 }}>
-              {expanded ? 'Hide Audit' : 'Quality Audit'}
-            </span>
-            <span>{expanded ? '▲' : '▼'}</span>
-          </div>
+          <span className="telemetry-toggle-hint">
+            {expanded ? '▲ Hide Data Audit' : '▼ Audit Details'}
+          </span>
         </div>
 
         {expanded && (
-          <div className="status-details" onClick={e => e.stopPropagation()}>
-            <div className="audit-card">
-              <div className="audit-card-title">
-                <span>🛡️</span> Data Quality Invariants
-              </div>
-              {status.quality_lines?.length > 0 ? (
-                <ul>
-                  {status.quality_lines.map((l, i) => (
-                    <li key={i}>{l}</li>
-                  ))}
-                </ul>
-              ) : (
-                <div style={{ color: 'var(--text-tertiary)' }}>No data anomalies reported.</div>
-              )}
+          <div className="audit-drawer" onClick={(e) => e.stopPropagation()}>
+            <div className="audit-header">
+              <span><ShieldIcon size={14} /> Python Data Quality & Normalization Audit</span>
+              <span style={{ fontSize: '0.74rem', color: 'var(--claude-text-tertiary)' }}>
+                Cleaned deterministically before reaching LLM
+              </span>
             </div>
 
-            <div className="audit-card">
-              <div className="audit-card-title">
-                <span>⚠️</span> Normalisation & Warnings
+            <div className="audit-columns">
+              <div className="audit-col">
+                <div className="audit-col-title">Deals Board Quality Rules</div>
+                <ul>
+                  {status.quality_lines
+                    ?.filter((l) => l.toLowerCase().includes('deal') || l.toLowerCase().includes('board: deals') || l.toLowerCase().includes('junk') || l.toLowerCase().includes('duplicate'))
+                    .map((line, i) => (
+                      <li key={i}>{line}</li>
+                    ))}
+                </ul>
               </div>
-              {status.warnings?.length > 0 ? (
+
+              <div className="audit-col">
+                <div className="audit-col-title">Work Orders Board Rules</div>
+                <ul>
+                  {status.quality_lines
+                    ?.filter((l) => l.toLowerCase().includes('order') || l.toLowerCase().includes('work_order') || l.toLowerCase().includes('billed') || l.toLowerCase().includes('column'))
+                    .map((line, i) => (
+                      <li key={i}>{line}</li>
+                    ))}
+                </ul>
+              </div>
+            </div>
+
+            {status.warnings && status.warnings.length > 0 && (
+              <div className="audit-warnings">
+                <div style={{ fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                  <WarningIcon size={13} /> Ingestion Caveats
+                </div>
                 <ul>
                   {status.warnings.map((w, i) => (
                     <li key={i}>{w}</li>
                   ))}
                 </ul>
-              ) : (
-                <div style={{ color: 'var(--text-tertiary)' }}>All board constraints satisfied.</div>
-              )}
-            </div>
+              </div>
+            )}
           </div>
         )}
       </div>
