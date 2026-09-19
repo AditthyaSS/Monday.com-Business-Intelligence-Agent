@@ -341,9 +341,20 @@ def data_status() -> dict:
         except Exception:
             pass
 
+    open_deals_count = 0
+    open_pipeline_val = "₹0"
+    if _deals_df is not None and "status" in _deals_df.columns:
+        open_mask = _deals_df["status"] == "Open"
+        open_deals_count = int(open_mask.sum())
+        if "deal_value" in _deals_df.columns:
+            from normalize.common import fmt_inr
+            open_pipeline_val = fmt_inr(float(_deals_df.loc[open_mask, "deal_value"].dropna().sum()))
+
     return {
         "deals_rows": len(_deals_df) if _deals_df is not None else 0,
         "work_orders_rows": len(_wo_df) if _wo_df is not None else 0,
+        "open_deals_count": open_deals_count,
+        "open_pipeline_value": open_pipeline_val,
         "fetched_at": datetime.now(timezone.utc).isoformat(),
         "data_as_of": dao,
         "quality_lines": quality_lines,

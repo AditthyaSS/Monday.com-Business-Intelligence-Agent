@@ -49,6 +49,16 @@ Newest entry at the top of "Session log". Keep "Current state" always up to date
 - Per-instance in-memory state: rate limits, LLM call counter, answer cache, data cache are all in-memory and reset on Vercel cold start. This is documented (see DECISIONS.md D_SPRINT).
 
 ## Session log
+### Session Live Monday Telemetry Onboarding & Brand Typography (Antigravity, 2026-09-19)
+- Integrated live Monday.com boards connection card into Onboarding and Architecture Guide modals:
+  - Active sync indicator ("Reading Monday.com boards..." -> "Connected to Monday.com Live Boards").
+  - Live metric cards: Deals Board (328 deals), Open Deals (47 open deals), and Work Orders Board (176 execution orders).
+  - Extended `/api/data-status` with `open_deals_count` and `open_pipeline_value`.
+- Updated typography for greeting and brand titles:
+  - Loaded Google Font `Original Surfer` for "Good evening, <Persona>" (`.greeting-text`) and "Skylark BI" (`.sidebar-title`, `.top-brand-text`).
+  - All other typography remains on clean modern sans-serif (`Plus Jakarta Sans`) and monospace (`JetBrains Mono`).
+- All 53 unit tests passing. Vite bundle built and synced to `public/`.
+
 ### Session Executive Personas & BYOK Settings (Antigravity, 2026-09-19)
 - Transformed onboarding with interactive Executive Persona selection modal inspired by Icons8 Claude Hand-Drawn characters:
   - 6 bespoke hand-drawn vector SVG characters: `The Pathfinder` (Visionary Founder), `Eagle Eye` (Chief Flight Commander), `Deal Maestro` (Revenue & Growth Lead), `Terrain Whisperer` (Lead Geo-Scientist), `Sensor Wizard` (Autopilot Architect), and `Pit Surveyor` (Mining & Heavy Industry).

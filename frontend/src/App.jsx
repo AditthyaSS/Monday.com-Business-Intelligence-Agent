@@ -640,6 +640,8 @@ export default function App() {
         isOpen={isGuideOpen}
         onClose={() => setIsGuideOpen(false)}
         onSelectPrompt={(q) => sendMessage(q)}
+        dataStatus={status}
+        statusLoading={statusLoading}
       />
 
       {/* Executive Character Persona Selection Modal */}
@@ -658,6 +660,8 @@ export default function App() {
           setIsOnboardingPersona(false)
         }}
         isOnboarding={isOnboardingPersona}
+        dataStatus={status}
+        statusLoading={statusLoading}
         onLaunchPrompt={(prompt) => {
           setIsPersonaModalOpen(false)
           setIsOnboardingPersona(false)
