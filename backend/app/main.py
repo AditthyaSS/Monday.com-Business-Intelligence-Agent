@@ -22,12 +22,24 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 
 from app.config import get_settings
-from app.sources.monday_api import MondayAPI, MondayAuthError, MondayUnavailable
+from fastapi.exceptions import RequestValidationError
+from app.sources.monday_api import (
+    MondayAPI,
+    MondayAuthError,
+    MondayRateLimitError,
+    MondayServerError,
+    MondayUnavailable,
+)
 from app.normalize.deals import normalise_deals, QualityReport
 from app.normalize.workorders import normalise_workorders, WOQualityReport
 from app.agent.loop import AgentResult, ToolExecutor, run_agent
 from app.llm.gemini import GeminiProvider
-from app.llm.base import LLMUnavailable
+from app.llm.base import (
+    LLMAuthError,
+    LLMQuotaExceeded,
+    LLMTimeoutError,
+    LLMUnavailable,
+)
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -116,10 +128,15 @@ def _check_rate_limit(ip: str) -> None:
     while window and now - window[0] > 60:
         window.popleft()
     if len(window) >= 6:
+        retry_after = int(max(1, 60 - (now - window[0])))
         raise HTTPException(
             status_code=429,
-            detail={"error": {"code": "rate_limited", "message": "Too many requests. Please wait a minute."},
-                    "retry_after_seconds": 60},
+            detail={
+                "code": "RATE_LIMITED",
+                "message": "Too many requests. Please wait a moment before trying again.",
+                "user_message": "⚠️ You are sending requests too quickly. Please wait a moment before trying again.",
+                "retry_after_seconds": retry_after,
+            },
         )
     window.append(now)
 
@@ -143,15 +160,27 @@ def _load_data(force: bool = False) -> None:
         logger.error("Failed to load deals: %s", exc)
         if _deals_df is None:
             raise
+        _from_cache = True
+        dao = _data_as_of() or "unknown"
+        _deals_snap_warnings = [
+            f"⚠️ Monday.com is temporarily unavailable. I couldn't refresh the latest board data. I'll use the most recent successfully cached data if available. Data last refreshed: {dao}."
+        ]
 
     try:
         wo_snap = _monday.get_board("work_orders")
         _wo_snap_warnings = wo_snap.warnings
+        if wo_snap.from_cache:
+            _from_cache = True
         _wo_df, _wo_report = normalise_workorders(wo_snap.df, today=today, warnings_in=wo_snap.warnings)
     except Exception as exc:
         logger.error("Failed to load work_orders: %s", exc)
         if _wo_df is None:
             raise
+        _from_cache = True
+        dao = _data_as_of() or "unknown"
+        _wo_snap_warnings = [
+            f"⚠️ Monday.com is temporarily unavailable. I couldn't refresh the latest board data. I'll use the most recent successfully cached data if available. Data last refreshed: {dao}."
+        ]
 
     _loaded_at = time.monotonic()
 
@@ -197,14 +226,74 @@ class ChatRequest(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Error helpers
+# Error helpers & Exception Handlers
 # ---------------------------------------------------------------------------
 
-def _error_response(code: str, message: str, status: int, extra: dict | None = None) -> JSONResponse:
-    body: dict[str, Any] = {"error": {"code": code, "message": message}}
-    if extra:
-        body.update(extra)
-    return JSONResponse(status_code=status, content=body)
+def _error_response(
+    code: str,
+    message: str,
+    user_message: str,
+    status: int,
+    retry_after_seconds: int | None = None,
+) -> JSONResponse:
+    content: dict[str, Any] = {
+        "error": {
+            "code": code,
+            "message": message,
+            "user_message": user_message,
+            "retry_after_seconds": retry_after_seconds,
+        },
+        "retry_after_seconds": retry_after_seconds,
+    }
+    headers: dict[str, str] = {}
+    if retry_after_seconds is not None:
+        headers["Retry-After"] = str(retry_after_seconds)
+    return JSONResponse(status_code=status, content=content, headers=headers)
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    return _error_response(
+        code="INVALID_REQUEST",
+        message="The request format was invalid.",
+        user_message="Please enter a valid question (up to 1,000 characters).",
+        status=400,
+    )
+
+
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    if exc.status_code == 429:
+        retry_after = 60
+        user_msg = "⚠️ You are sending requests too quickly. Please wait a moment before trying again."
+        if isinstance(exc.detail, dict):
+            retry_after = exc.detail.get("retry_after_seconds") or 60
+            user_msg = exc.detail.get("user_message") or user_msg
+        return _error_response(
+            code="RATE_LIMITED",
+            message="Rate limit reached.",
+            user_message=user_msg,
+            status=429,
+            retry_after_seconds=retry_after,
+        )
+    detail_msg = exc.detail if isinstance(exc.detail, str) else "Request error."
+    return _error_response(
+        code="HTTP_ERROR",
+        message=detail_msg,
+        user_message=f"⚠️ {detail_msg}",
+        status=exc.status_code,
+    )
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    logger.error("Unhandled exception on %s: %s", request.url.path, exc, exc_info=True)
+    return _error_response(
+        code="INTERNAL_ERROR",
+        message="An unexpected server error occurred.",
+        user_message="⚠️ Something went wrong while processing this request. Please try again.",
+        status=500,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -268,7 +357,7 @@ def data_status() -> dict:
 
 @app.post("/api/chat")
 @app.post("/chat")
-def chat(request: Request, body: ChatRequest) -> dict:
+def chat(request: Request, body: ChatRequest) -> Any:
     ip = _get_client_ip(request)
     try:
         _check_rate_limit(ip)
@@ -278,15 +367,61 @@ def chat(request: Request, body: ChatRequest) -> dict:
     try:
         _load_data()
     except MondayAuthError:
-        return _error_response("monday_auth_error", "Can't read monday.com (credentials problem)", 502)
+        return _error_response(
+            code="MONDAY_AUTH_ERROR",
+            message="Monday.com credentials rejected.",
+            user_message="⚠️ I couldn't access the Monday.com data. The connection or API credentials may need to be checked.",
+            status=502,
+        )
+    except MondayRateLimitError as exc:
+        return _error_response(
+            code="MONDAY_RATE_LIMITED",
+            message="Monday.com rate limit reached.",
+            user_message="⚠️ Monday.com is temporarily rate-limiting requests. Please try again shortly.",
+            status=429,
+            retry_after_seconds=exc.retry_after or 60,
+        )
+    except MondayServerError:
+        return _error_response(
+            code="MONDAY_SERVER_ERROR",
+            message="Monday.com service problem.",
+            user_message="⚠️ Monday.com is experiencing a temporary service problem. Please try again shortly.",
+            status=502,
+        )
     except MondayUnavailable:
-        return _error_response("monday_unavailable", "monday.com is unreachable and no cached data is available.", 503)
+        return _error_response(
+            code="MONDAY_UNAVAILABLE",
+            message="Monday.com is currently unavailable.",
+            user_message="⚠️ Monday.com is currently unavailable, and no previously cached data is available. Please try again later.",
+            status=503,
+        )
     except Exception as exc:
-        logger.error("Data load error: %s", exc)
-        return _error_response("data_load_error", "Could not load board data.", 503)
+        logger.error("Data load error: %s", exc, exc_info=True)
+        return _error_response(
+            code="INTERNAL_ERROR",
+            message="Could not load board data.",
+            user_message="⚠️ Something went wrong while processing this request. Please try again.",
+            status=500,
+        )
 
     messages = [{"role": m.role, "content": m.content} for m in body.messages]
-    question = messages[-1]["content"]
+    if not messages:
+        return _error_response(
+            code="INVALID_REQUEST",
+            message="No messages provided.",
+            user_message="Please enter a question to get started.",
+            status=400,
+        )
+
+    question = messages[-1]["content"].strip()
+    if not question:
+        return _error_response(
+            code="INVALID_REQUEST",
+            message="Empty question.",
+            user_message="Please enter a question or choose one of the suggested sample questions.",
+            status=400,
+        )
+
     history = messages[:-1]
 
     # Answer cache
@@ -300,11 +435,33 @@ def chat(request: Request, body: ChatRequest) -> dict:
     _reset_daily_counter()
     use_degraded = _llm_disabled() or not _budget_ok()
     llm: GeminiProvider | None = None
-    if not use_degraded:
+    fallback_prefix: str | None = None
+
+    if _llm_disabled():
+        use_degraded = True
+    elif not _budget_ok():
+        use_degraded = True
+        fallback_prefix = (
+            "⚠️ AI narration is temporarily unavailable because the AI service has reached its current usage limit. "
+            "I'm showing the computed result directly from the Monday.com data."
+        )
+    else:
         try:
             llm = GeminiProvider(settings)
-        except Exception:
+        except LLMAuthError:
+            logger.warning("GeminiProvider init auth failure; falling back to degraded mode")
             use_degraded = True
+            fallback_prefix = (
+                "⚠️ AI narration is unavailable because the AI service connection needs attention. "
+                "I'm showing the computed result directly from the Monday.com data."
+            )
+        except Exception as exc:
+            logger.warning("GeminiProvider init error: %s; falling back to degraded mode", exc)
+            use_degraded = True
+            fallback_prefix = (
+                "⚠️ AI narration is temporarily unavailable. "
+                "I'm showing the computed result directly from the Monday.com data."
+            )
 
     executor = ToolExecutor(
         deals_df=_deals_df,
@@ -325,21 +482,32 @@ def chat(request: Request, body: ChatRequest) -> dict:
             data_as_of=_data_as_of(),
             max_llm_calls=settings.max_llm_calls_per_question,
             llm_disabled=use_degraded,
+            fallback_prefix=fallback_prefix,
         )
-    except LLMUnavailable as exc:
-        return _error_response("llm_unavailable", f"AI model is unavailable: {exc}", 503)
     except Exception as exc:
         logger.error("Agent error: %s", exc, exc_info=True)
-        return _error_response("agent_error", "An error occurred processing your request.", 500)
+        return _error_response(
+            code="INTERNAL_ERROR",
+            message="An error occurred processing your request.",
+            user_message="⚠️ Something went wrong while processing this request. Please try again.",
+            status=500,
+        )
 
     _inc_llm_calls(result.llm_calls)
+
+    # If data came from cache, append notice and caveat
+    dao = _data_as_of() or "unknown"
+    if _from_cache:
+        stale_notice = f"_⚠️ Note: Monday.com is currently unavailable. Using cached data (last refreshed: {dao})._"
+        if "last refreshed" not in result.answer.lower() and "cached data" not in result.answer.lower():
+            result.answer = f"{result.answer}\n\n{stale_notice}"
 
     trace_out = [
         {
             "tool": t.tool,
             "params": t.params,
             "coverage": t.coverage,
-            "caveats": t.caveats,
+            "caveats": t.caveats + ([f"Using cached board data (data as of {dao})"] if _from_cache else []),
             "assumptions": t.assumptions,
         }
         for t in result.trace

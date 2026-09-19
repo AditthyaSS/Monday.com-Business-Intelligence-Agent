@@ -17,7 +17,15 @@ import pandas as pd
 
 from app.analytics import tools as analytics
 from app.analytics.periods import resolve_period
-from app.llm.base import LLMMessage, LLMProvider, LLMUnavailable, ToolCall
+from app.llm.base import (
+    LLMAuthError,
+    LLMMessage,
+    LLMProvider,
+    LLMQuotaExceeded,
+    LLMTimeoutError,
+    LLMUnavailable,
+    ToolCall,
+)
 from app.normalize.common import fmt_inr
 from app.normalize.deals import QualityReport
 from app.normalize.workorders import WOQualityReport
@@ -148,12 +156,12 @@ def _keyword_route(question: str) -> tuple[str, dict] | None:
     return None
 
 
-def _render_degraded(tool_name: str, result: dict[str, Any]) -> str:
+def _render_degraded(tool_name: str, result: dict[str, Any], prefix: str | None = None) -> str:
     """Render a deterministic answer from a ToolResult in degraded mode."""
-    prefix = "AI narration unavailable, showing computed results.\n\n"
+    p = (prefix or "AI narration unavailable, showing computed results.").rstrip() + "\n\n"
     display = result.get("display", {})
     summary = display.get("summary", "")
-    lines = [prefix + summary]
+    lines = [p + summary]
     if result.get("no_data_in_period"):
         avail = result.get("available_range", "unknown")
         lines.append(f"\nNo data found for the requested period. Data available: {avail}.")
@@ -186,6 +194,7 @@ def run_agent(
     data_as_of: str | None,
     max_llm_calls: int = 3,
     llm_disabled: bool = False,
+    fallback_prefix: str | None = None,
 ) -> AgentResult:
     """Run the full agent loop for one user question.
 
@@ -207,7 +216,7 @@ def run_agent(
 
     # --- LLM disabled or unavailable: degrade immediately ---
     if llm_disabled or llm is None:
-        return _degraded_answer(question, executor, trace, data_as_of)
+        return _degraded_answer(question, executor, trace, data_as_of, prefix=fallback_prefix)
 
     # --- LLM loop ---
     messages = list(history_msgs)
@@ -220,9 +229,39 @@ def run_agent(
             response = llm.generate(system_prompt, messages, TOOL_DECLARATIONS)
             llm_calls += 1
             model_used = response.model_used
-        except LLMUnavailable as exc:
-            logger.warning("LLM unavailable: %s; falling back to degraded mode", exc)
-            return _degraded_answer(question, executor, trace, data_as_of)
+        except LLMQuotaExceeded as exc:
+            logger.warning("LLM quota exceeded: %s; falling back to degraded mode", exc)
+            fallback_msg = (
+                "⚠️ AI narration is temporarily unavailable because the AI service has reached its current usage limit. "
+                "I'm showing the computed result directly from the Monday.com data."
+            )
+            if trace:
+                last_result = executor.run(trace[-1].tool, trace[-1].params)
+                answer = _render_degraded(trace[-1].tool, last_result, prefix=fallback_msg)
+                return AgentResult(answer=answer, trace=trace, llm_calls=llm_calls, model_used=model_used, degraded=True)
+            return _degraded_answer(question, executor, trace, data_as_of, prefix=fallback_msg)
+        except LLMAuthError as exc:
+            logger.warning("LLM auth error: %s; falling back to degraded mode", exc)
+            fallback_msg = (
+                "⚠️ AI narration is unavailable because the AI service connection needs attention. "
+                "I'm showing the computed result directly from the Monday.com data."
+            )
+            if trace:
+                last_result = executor.run(trace[-1].tool, trace[-1].params)
+                answer = _render_degraded(trace[-1].tool, last_result, prefix=fallback_msg)
+                return AgentResult(answer=answer, trace=trace, llm_calls=llm_calls, model_used=model_used, degraded=True)
+            return _degraded_answer(question, executor, trace, data_as_of, prefix=fallback_msg)
+        except (LLMTimeoutError, LLMUnavailable) as exc:
+            logger.warning("LLM unavailable (%s): %s; falling back to degraded mode", type(exc).__name__, exc)
+            fallback_msg = (
+                "⚠️ AI narration is temporarily unavailable. "
+                "I'm showing the computed result directly from the Monday.com data."
+            )
+            if trace:
+                last_result = executor.run(trace[-1].tool, trace[-1].params)
+                answer = _render_degraded(trace[-1].tool, last_result, prefix=fallback_msg)
+                return AgentResult(answer=answer, trace=trace, llm_calls=llm_calls, model_used=model_used, degraded=True)
+            return _degraded_answer(question, executor, trace, data_as_of, prefix=fallback_msg)
 
         if not response.tool_calls:
             # No tool calls → final answer
@@ -281,20 +320,20 @@ def _degraded_answer(
     executor: ToolExecutor,
     trace: list[TraceItem],
     data_as_of: str | None,
+    prefix: str | None = None,
 ) -> AgentResult:
     """Keyword-route and render a degraded (no-LLM) answer."""
     route = _keyword_route(question)
     if route is None:
-        # No match: show the sample questions
+        lead = (prefix or "AI narration unavailable, showing computed results.").rstrip()
         answer = (
-            "AI narration unavailable, showing computed results.\n\n"
-            "I can answer questions about:\n"
+            f"{lead}\n\n"
+            "Could you clarify what you'd like to analyze? For example, you can ask about:\n"
             "- Open pipeline (count, value, sector, owner)\n"
             "- Work orders (billed, collected, receivable)\n"
             "- Sector overview\n"
             "- Leadership brief\n"
-            "- Data quality\n\n"
-            "Try: 'How is our open pipeline looking?'"
+            "- Data quality"
         )
         return AgentResult(answer=answer, trace=[], llm_calls=0, model_used=None, degraded=True)
 
@@ -308,5 +347,5 @@ def _degraded_answer(
         caveats=result.get("caveats", []),
         assumptions=result.get("assumptions_used", []),
     ))
-    answer = _render_degraded(tool_name, result)
+    answer = _render_degraded(tool_name, result, prefix=prefix)
     return AgentResult(answer=answer, trace=trace, llm_calls=0, model_used=None, degraded=True)

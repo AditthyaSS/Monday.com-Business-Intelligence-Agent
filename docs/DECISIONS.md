@@ -38,6 +38,12 @@ handoff protocol in PROGRESS.md, every AI use logged in AI_USAGE.md.
 **D8. "Leadership updates" interpretation:** a `leadership_brief` capability that returns headline numbers,
 top risks, sector highlights and data caveats in a paste-ready format, on request ("prepare the leadership update").
 
+**D10. Structured user-facing error handling and graceful fallbacks.** Never expose raw stack traces, exceptions, GraphQL errors, or API credentials to the client. External API failures are classified into user-friendly responses:
+- Monday.com unavailable / network / 5xx / 429: Fall back to stale cached board data if present, prominently displaying `Data last refreshed: <timestamp>`. If no cache exists, return clear HTTP status (502, 503, 429) with structured error payload `{error: {code, message, user_message, retry_after_seconds}}`.
+- Gemini API errors (429 quota, auth/config, timeout): Immediately degrade to deterministic tool computation on live Monday data with prominent explanatory banner (e.g. `⚠️ AI narration is temporarily unavailable because the AI service has reached its current usage limit. I'm showing the computed result directly from the Monday.com data.`).
+- HTTP status codes: 400 for bad user requests, 429 for rate limits, 502/503 for upstream outages, 500 for unexpected internal errors (logged server-side only).
+- Frontend preserves chat state, renders inline error cards, displays retry countdowns for 429, and provides retry actions.
+
 ## Data-handling assumptions (proposed defaults)
 - A1. Currency INR; amounts excluding GST by default; state this in answers. Including-GST available on request.
 - A2. Deal Status is more reliable than Deal Stage; on conflict, status wins and the conflict count is reported.

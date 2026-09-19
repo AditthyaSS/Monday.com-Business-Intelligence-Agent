@@ -29,11 +29,28 @@ class ReadOnlyViolation(MondayError):
 
 
 class MondayAuthError(MondayError):
-    """Credentials are invalid or unauthorized."""
+    """Credentials are invalid or unauthorized (401/403)."""
 
 
 class MondayComplexityError(MondayError):
     """The query must be retried with a smaller page size."""
+
+
+class MondayRateLimitError(MondayError):
+    """Monday.com is rate-limiting requests (429).
+
+    Attributes
+    ----------
+    retry_after : int | None
+        Seconds to wait before retrying, if provided by the response.
+    """
+    def __init__(self, message: str = "", retry_after: int | None = None) -> None:
+        super().__init__(message)
+        self.retry_after = retry_after
+
+
+class MondayServerError(MondayError):
+    """Monday.com returned a 5xx response."""
 
 
 class MondayUnavailable(MondayError):
@@ -93,13 +110,14 @@ class MondayAPI:
             if cached is not None:
                 stale = copy.deepcopy(cached.snapshot)
                 stale.from_cache = True
+                ts = stale.fetched_at.isoformat()
                 stale.warnings.append(
-                    f"monday.com unreachable, using data fetched at {stale.fetched_at.isoformat()}"
+                    f"⚠️ Monday.com is temporarily unavailable. I couldn't refresh the latest board data. I'll use the most recent successfully cached data if available. Data last refreshed: {ts} (monday.com unreachable)."
                 )
                 return stale
-            if isinstance(exc, MondayUnavailable):
+            if isinstance(exc, (MondayRateLimitError, MondayServerError, MondayUnavailable)):
                 raise
-            raise MondayUnavailable(f"Unable to read the {kind} board: {exc}") from exc
+            raise MondayUnavailable("Monday.com is temporarily unavailable") from exc
 
     def _configured_id(self, kind: BoardKind) -> str | None:
         return self.settings.deals_board_id if kind == "deals" else self.settings.work_orders_board_id
@@ -119,31 +137,69 @@ class MondayAPI:
         last_error: Exception | None = None
         for attempt in range(3):
             try:
-                response = self._client.post(API_URL, headers=self._headers(), json={"query": query, "variables": variables})
+                response = self._client.post(
+                    API_URL, headers=self._headers(),
+                    json={"query": query, "variables": variables},
+                )
                 if response.status_code in (401, 403):
                     raise MondayAuthError("Monday credentials were rejected")
-                if response.status_code == 429 or response.status_code >= 500:
-                    raise MondayError(f"transient HTTP status {response.status_code}")
+                if response.status_code == 429:
+                    retry_after: int | None = None
+                    try:
+                        retry_after = int(response.headers.get("Retry-After", ""))
+                    except (ValueError, TypeError):
+                        pass
+                    last_error = MondayRateLimitError(
+                        "Monday.com rate limit reached", retry_after=retry_after
+                    )
+                    if attempt < 2:
+                        self._sleep((2 ** attempt) * 0.3 + self._random() * 0.1)
+                        continue
+                    raise last_error
+                if response.status_code >= 500:
+                    last_error = MondayServerError(
+                        f"Monday.com server error {response.status_code}"
+                    )
+                    if attempt < 2:
+                        self._sleep((2 ** attempt) * 0.3 + self._random() * 0.1)
+                        continue
+                    raise last_error
                 response.raise_for_status()
                 payload = response.json()
                 errors = payload.get("errors", [])
                 if errors:
-                    message = "; ".join(str(error.get("message", "GraphQL error")) for error in errors)
+                    # Sanitise: never forward raw GraphQL error text to the user
+                    message = "; ".join(
+                        str(e.get("message", "GraphQL error")) for e in errors
+                    )
                     lowered = message.casefold()
-                    if any(word in lowered for word in ("unauthorized", "authentication", "forbidden", "permission")):
-                        raise MondayAuthError(message)
-                    if any(word in lowered for word in ("complexity",)):
+                    if any(w in lowered for w in ("unauthorized", "authentication", "forbidden", "permission")):
+                        raise MondayAuthError("Monday credentials were rejected")
+                    if any(w in lowered for w in ("complexity",)):
                         raise MondayComplexityError(message)
-                    raise MondayError(message)
+                    if any(w in lowered for w in ("rate limit", "rate_limit")):
+                        last_error = MondayRateLimitError("Monday.com rate limit reached")
+                        if attempt < 2:
+                            self._sleep((2 ** attempt) * 0.3 + self._random() * 0.1)
+                            continue
+                        raise last_error
+                    raise MondayError("Monday.com returned a data error")
                 return payload["data"]
             except (MondayAuthError, MondayComplexityError):
                 raise
+            except (MondayRateLimitError, MondayServerError):
+                raise
+            except httpx.TimeoutException as exc:
+                last_error = exc
+                if attempt == 2:
+                    break
+                self._sleep((2 ** attempt) * 0.2 + self._random() * 0.1)
             except (httpx.HTTPError, MondayError, KeyError, ValueError) as exc:
                 last_error = exc
                 if attempt == 2:
                     break
-                self._sleep((2**attempt) * 0.2 + self._random() * 0.1)
-        raise MondayUnavailable(f"Monday request failed after retries: {last_error}") from last_error
+                self._sleep((2 ** attempt) * 0.2 + self._random() * 0.1)
+        raise MondayUnavailable("Monday.com is temporarily unavailable") from last_error
 
     def _find_board_id(self, kind: BoardKind) -> str:
         data = self._post("query { boards { id name } }", {})

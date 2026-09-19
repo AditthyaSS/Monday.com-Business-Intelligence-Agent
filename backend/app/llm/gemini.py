@@ -14,7 +14,10 @@ from typing import Any
 import google.genai as genai
 from google.genai import types as gtypes
 
-from app.llm.base import LLMMessage, LLMResponse, LLMUnavailable, ToolCall
+from app.llm.base import (
+    LLMAuthError, LLMMessage, LLMQuotaExceeded, LLMResponse,
+    LLMTimeoutError, LLMUnavailable, ToolCall,
+)
 from app.config import Settings
 
 logger = logging.getLogger(__name__)
@@ -84,28 +87,49 @@ class GeminiProvider:
         if sdk_tool:
             config_kwargs["tools"] = [sdk_tool]
 
+        last_quota_exc: Exception | None = None
         for model in [self._model] + ([self._fallback] if self._fallback else []):
             for attempt in range(2):  # 1 retry per model
                 try:
                     response = self._client.models.generate_content(
                         model=model,
                         contents=sdk_messages,
-                        config=gtypes.GenerateContentConfig(**{k: v for k, v in config_kwargs.items() if v is not None}),
+                        config=gtypes.GenerateContentConfig(
+                            **{k: v for k, v in config_kwargs.items() if v is not None}
+                        ),
                     )
                     return self._parse_response(response, model)
                 except Exception as exc:
-                    err = str(exc).lower()
-                    if "429" in err or "quota" in err or "rate" in err:
+                    err_lower = str(exc).lower()
+
+                    # Auth / config errors — no point retrying
+                    if any(w in err_lower for w in ("api_key", "api key", "invalid_argument",
+                                                    "permission_denied", "unauthenticated")):
+                        logger.error("Gemini auth error (model=%s): redacted", model)
+                        raise LLMAuthError("Gemini authentication failed") from None
+
+                    # Quota / rate limit — retry with back-off, then try fallback
+                    if any(w in err_lower for w in ("429", "quota", "resource_exhausted",
+                                                    "rate_limit", "rate limit")):
+                        last_quota_exc = exc
                         if attempt == 0:
-                            wait = 5 + self._random() * 5
-                            logger.warning("Gemini 429; sleeping %.1fs before retry", wait)
+                            wait = 5.0 + self._random() * 5.0
+                            logger.warning("Gemini 429 on %s; retrying in %.1fs", model, wait)
                             self._sleep(wait)
                             continue
-                        # Exhausted retries for this model
-                        logger.warning("Gemini 429 after retry on %s; trying fallback", model)
+                        logger.warning("Gemini 429 exhausted on %s; trying fallback", model)
                         break  # try next model
-                    raise LLMUnavailable(f"Gemini error ({model}): {exc}") from exc
-        raise LLMUnavailable("All Gemini models exhausted (429 / quota)")
+
+                    # Timeout
+                    if any(w in err_lower for w in ("timeout", "deadline")):
+                        logger.warning("Gemini timeout on %s (attempt %d)", model, attempt)
+                        raise LLMTimeoutError("Gemini request timed out") from None
+
+                    # Any other error — do not expose internal details
+                    logger.error("Gemini unexpected error on %s: redacted", model)
+                    raise LLMUnavailable("Gemini is temporarily unavailable") from None
+
+        raise LLMQuotaExceeded("Gemini daily quota exhausted") from last_quota_exc
 
     @staticmethod
     def _parse_response(response: Any, model: str) -> LLMResponse:

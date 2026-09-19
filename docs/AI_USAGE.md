@@ -4,3 +4,4 @@
 |------|------|------|-------|
 | 2026-09-19 | Codex | Phase 1: monday client (sources/base.py, sources/monday_api.py, tests/test_monday_api.py) | Built read-only guard, cursor pagination, stale cache, retry logic |
 | 2026-09-19 | Antigravity (Claude Sonnet 4.6 Thinking) | Sprint build: all remaining phases in one run | Built normalize (common, taxonomy, deals, workorders), analytics (periods, tools), llm (base, gemini), agent (prompts, loop), FastAPI main, Vercel deploy files, React frontend, test_core.py. 43 tests passing. Real LLM calls: 0 (LLM_DISABLED=1 used). |
+| 2026-09-19 | Antigravity (Gemini 3.8 Flash) | Comprehensive user-facing API error handling & graceful fallbacks | Standardized structured error responses, sanitized messages, HTTP status codes, degraded calculation fallbacks for Gemini outages, cached fallback notices for Monday.com, React error cards & countdowns, test_error_handling.py (53/53 tests pass). |

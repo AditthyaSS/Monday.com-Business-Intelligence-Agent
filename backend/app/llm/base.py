@@ -34,7 +34,19 @@ class LLMResponse:
 
 
 class LLMUnavailable(Exception):
-    """LLM could not be reached after retries and fallback."""
+    """Base: LLM could not be reached. Always falls back to degraded mode."""
+
+
+class LLMQuotaExceeded(LLMUnavailable):
+    """Daily or per-minute quota exhausted (429 / RESOURCE_EXHAUSTED)."""
+
+
+class LLMAuthError(LLMUnavailable):
+    """API key invalid or project configuration problem."""
+
+
+class LLMTimeoutError(LLMUnavailable):
+    """Network timeout or server-side timeout from the LLM service."""
 
 
 class LLMProvider(Protocol):

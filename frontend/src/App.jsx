@@ -92,10 +92,10 @@ export default function App() {
       const data = await res.json()
 
       if (!res.ok) {
-        const errMsg = data?.error?.message || `Server error (${res.status})`
-        const retryAfter = data?.retry_after_seconds
+        const errMsg = data?.error?.user_message || data?.error?.message || `Server error (${res.status})`
+        const retryAfter = data?.error?.retry_after_seconds ?? data?.retry_after_seconds ?? null
         setError({ message: errMsg, retryAfter })
-        if (retryAfter) {
+        if (retryAfter && retryAfter > 0) {
           setRetryCountdown(retryAfter)
           clearInterval(retryTimerRef.current)
           retryTimerRef.current = setInterval(() => {
@@ -192,7 +192,7 @@ export default function App() {
 
         {error && (
           <div className="error-card" role="alert">
-            <p>⚠ {error.message}</p>
+            <p>{error.message.startsWith('⚠️') || error.message.startsWith('⚠') ? error.message : `⚠️ ${error.message}`}</p>
             {error.retryAfter && retryCountdown > 0 && (
               <div className="countdown">Retry available in {retryCountdown}s</div>
             )}

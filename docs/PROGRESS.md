@@ -3,14 +3,13 @@
 Newest entry at the top of "Session log". Keep "Current state" always up to date.
 
 ## Current state
-- **Active tool:** Antigravity (sprint build session)
+- **Active tool:** Antigravity (error handling & resilience)
 - **Deadline:** 19 Sep 2026, 7:00 PM.
-- **Phase:** COMPLETE — all phases built and working.
-- **Real Gemini calls made today:** 0 (LLM_DISABLED=1 used for all testing)
-- **Backend:** FastAPI with all endpoints (/api/health, /api/data-status, /api/chat), working with live monday data.
-- **Frontend:** React + Vite built to frontend/dist, served by FastAPI.
-- **Tests:** 43/43 passing.
-- **Deploy:** vercel.json + api/index.py + root requirements.txt ready.
+- **Phase:** COMPLETE — user-facing API error handling implemented across the board.
+- **Backend:** FastAPI with structured error JSON format, sanitized user messages, HTTP status codes, degraded fallback.
+- **Frontend:** React + Vite handling error cards, countdown timers, and retry actions without losing chat state.
+- **Tests:** 53/53 passing (including full external error condition suite).
+- **Deploy:** Vercel serverless ready.
 
 ## Next steps (post-sprint)
 1. Deploy to Vercel: `vercel --prod` with env vars set in Vercel dashboard.
@@ -50,6 +49,15 @@ Newest entry at the top of "Session log". Keep "Current state" always up to date
 - Per-instance in-memory state: rate limits, LLM call counter, answer cache, data cache are all in-memory and reset on Vercel cold start. This is documented (see DECISIONS.md D_SPRINT).
 
 ## Session log
+### Session Error Handling (Antigravity, 2026-09-19)
+- Implemented structured error handling according to specification:
+  - Monday.com errors (401/403, 429, 5xx, network unavailability) with cached fallback.
+  - Gemini LLM errors (429 quota, auth/config, timeout/network) falling back to deterministic computed results with clean user notices.
+  - HTTP status codes (400, 429, 502, 503, 500) and strict exclusion of stack traces / technical dumps.
+  - FastAPI exception handlers for RequestValidationError, HTTPException, and uncaught exceptions.
+  - React frontend preservation of chat state, inline error cards, countdown timers for 429, and retry buttons.
+- Added `backend/tests/test_error_handling.py` with 10 unit tests covering all failure and fallback modes. 53/53 tests pass.
+
 ### Session 0 (chat, before coding)
 - Read assignment PDF and email instructions; profiled both xlsx files; chose stack; wrote these docs.
 
