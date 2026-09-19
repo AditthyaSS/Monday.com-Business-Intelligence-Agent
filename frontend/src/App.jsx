@@ -2,40 +2,55 @@ import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { StatusStrip } from './components/StatusStrip.jsx'
 import { UserMessage, AssistantMessage } from './components/Message.jsx'
 import { LoadingMessage } from './components/LoadingMessage.jsx'
+import { ErrorCard } from './components/ErrorCard.jsx'
+import {
+  ClaudeLogo,
+  HandDrawnWrite,
+  HandDrawnLearn,
+  HandDrawnCode,
+  HandDrawnCoffee,
+  HandDrawnBulb,
+  HandDrawnPlus,
+  HandDrawnMic,
+  HandDrawnWaveform,
+  HandDrawnSend,
+  HandDrawnSidebar,
+} from './components/Icons.jsx'
 
 const MAX_CHARS = 1000
 const MAX_HISTORY = 8
 const ABORT_MS = 90000
 
-const SAMPLE_QUESTIONS = [
+// Claude prompt chips matching screenshot style
+const CLAUDE_PROMPTS = [
   {
-    icon: '📊',
+    icon: <HandDrawnWrite size={15} />,
     label: 'Pipeline Health',
+    tag: 'Write',
     query: "How's our open pipeline looking overall?",
   },
   {
-    icon: '⚡',
-    label: 'Energy Sector Q3/Q4',
+    icon: <HandDrawnLearn size={15} />,
+    label: 'Energy Sector',
+    tag: 'Learn',
     query: "How's our pipeline looking for the energy sector this quarter?",
   },
   {
-    icon: '🎯',
+    icon: <HandDrawnCode size={15} />,
     label: 'Win Rate Analysis',
+    tag: 'Code',
     query: "What's our win rate by sector?",
   },
   {
-    icon: '💰',
-    label: 'Billing vs Collections',
+    icon: <HandDrawnCoffee size={15} />,
+    label: 'Mining Billed vs Collected',
+    tag: 'Life stuff',
     query: "How much have we billed versus collected on mining work orders?",
   },
   {
-    icon: '🌐',
-    label: 'Cross-Board Overview',
-    query: "Give me a sector overview across deals and work orders",
-  },
-  {
-    icon: '📋',
-    label: 'Executive Briefing',
+    icon: <HandDrawnBulb size={15} />,
+    label: 'Leadership Update',
+    tag: "Claude's choice",
     query: "Prepare a leadership update",
   },
 ]
@@ -45,10 +60,12 @@ export default function App() {
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
   const [loadingStart, setLoadingStart] = useState(0)
-  const [error, setError] = useState(null) // {message, retryAfter?}
+  const [error, setError] = useState(null)
   const [status, setStatus] = useState(null)
   const [statusLoading, setStatusLoading] = useState(true)
   const [statusError, setStatusError] = useState(null)
+  const [sidebarOpen, setSidebarOpen] = useState(true)
+  const [showStatusStrip, setShowStatusStrip] = useState(false)
 
   const chatBottomRef = useRef(null)
   const textareaRef = useRef(null)
@@ -56,7 +73,15 @@ export default function App() {
   const retryTimerRef = useRef(null)
   const [retryCountdown, setRetryCountdown] = useState(0)
 
-  // Load data status on mount
+  // Dynamic greeting based on time of day (matching Claude: "Evening, how are things?")
+  const getGreeting = () => {
+    const hour = new Date().getHours()
+    if (hour < 12) return 'Morning, how are things?'
+    if (hour < 17) return 'Afternoon, how are things?'
+    return 'Evening, how are things?'
+  }
+
+  // Load live telemetry
   const fetchStatus = useCallback(async () => {
     try {
       const res = await fetch('/api/data-status')
@@ -78,13 +103,13 @@ export default function App() {
   // Auto-scroll on new messages
   useEffect(() => {
     chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages, loading])
+  }, [messages, loading, error])
 
   // Auto-resize textarea height
   useEffect(() => {
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto'
-      textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 160)}px`
+      textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 180)}px`
     }
   }, [input])
 
@@ -98,13 +123,12 @@ export default function App() {
       setMessages((prev) => [...prev, userMsg])
       setInput('')
       if (textareaRef.current) {
-        textareaRef.current.style.height = '44px'
+        textareaRef.current.style.height = '48px'
       }
 
       setLoading(true)
       setLoadingStart(Date.now())
 
-      // Build history (last MAX_HISTORY messages)
       const allMessages = [...messages, userMsg].slice(-MAX_HISTORY)
       const payload = {
         messages: allMessages.map((m) => ({ role: m.role, content: m.content })),
@@ -117,7 +141,10 @@ export default function App() {
         controller.abort()
         setLoading(false)
         setError({
-          message: '⚠️ The request timed out after 90 seconds. Please try again.',
+          code: 'TIMEOUT',
+          message: "🛰️ My AI brain didn't answer in time. No worries, the underlying numbers are still available.",
+          user_message: "🛰️ My AI brain didn't answer in time. No worries, the underlying numbers are still available.",
+          status: 504,
         })
       }, ABORT_MS)
 
@@ -130,14 +157,38 @@ export default function App() {
         })
 
         clearTimeout(abortTimer)
-        const data = await res.json()
 
-        if (!res.ok) {
-          const errMsg =
-            data?.error?.user_message || data?.error?.message || `Server error (${res.status})`
-          const retryAfter =
-            data?.error?.retry_after_seconds ?? data?.retry_after_seconds ?? null
-          setError({ message: errMsg, retryAfter })
+        let data = null
+        const contentType = res.headers.get('content-type') || ''
+        if (contentType.includes('application/json')) {
+          try {
+            data = await res.json()
+          } catch (jsonErr) {
+            data = null
+          }
+        } else {
+          // HTML edge response (404/502)
+          data = {
+            error: {
+              code: res.status === 404 ? 'GATEWAY_404' : 'SERVER_ERROR',
+              message: `HTTP ${res.status}`,
+              user_message: "🛠️ I hit a small snag while working on that. Please try again.",
+            },
+          }
+        }
+
+        if (!res.ok || !data || data.error) {
+          const errObj = data?.error || {}
+          const errMsg = errObj.user_message || errObj.message || "🛠️ I hit a small snag while working on that. Please try again."
+          const retryAfter = errObj.retry_after_seconds ?? data?.retry_after_seconds ?? null
+
+          setError({
+            code: errObj.code || `HTTP_${res.status}`,
+            message: errObj.message || errMsg,
+            user_message: errMsg,
+            retryAfter,
+            status: res.status,
+          })
 
           if (retryAfter && retryAfter > 0) {
             setRetryCountdown(retryAfter)
@@ -161,14 +212,16 @@ export default function App() {
             model: data.model_used,
           }
           setMessages((prev) => [...prev, assistantMsg])
-          // Refresh status silently in background
           fetchStatus()
         }
       } catch (e) {
         clearTimeout(abortTimer)
         if (e.name !== 'AbortError') {
           setError({
-            message: '⚠️ Network connection issue. Unable to communicate with the server.',
+            code: 'NETWORK_ERROR',
+            message: e.message || 'Failed to fetch',
+            user_message: "🤖 I can't reach Monday right now. The data desk seems to be taking a coffee break. I'll use the latest cached data if available.",
+            status: 0,
           })
         }
       } finally {
@@ -189,7 +242,11 @@ export default function App() {
 
   const handleRetry = () => {
     const lastUser = [...messages].reverse().find((m) => m.role === 'user')
-    if (lastUser) sendMessage(lastUser.content)
+    if (lastUser) {
+      sendMessage(lastUser.content)
+    } else if (input.trim()) {
+      sendMessage(input)
+    }
   }
 
   const handleClearSession = () => {
@@ -202,169 +259,286 @@ export default function App() {
   const isEmpty = messages.length === 0 && !loading
 
   return (
-    <div className="app">
-      {/* Executive Header */}
-      <header className="header">
-        <div className="header-brand">
-          <div className="header-icon-wrapper">
-            <span className="header-icon">🚁</span>
+    <div className="claude-app-container">
+      {/* Left Claude-Inspired Sidebar */}
+      <aside className={`claude-sidebar ${sidebarOpen ? 'open' : 'collapsed'}`}>
+        <div className="sidebar-header">
+          <div className="sidebar-brand">
+            <ClaudeLogo size={24} />
+            <span className="sidebar-title">Claude</span>
           </div>
-          <div className="header-title-wrap">
-            <div className="header-title">
-              Skylark Intelligence
-              <span className="header-badge">LIVE BOARDS</span>
-            </div>
-            <div className="header-subtitle">
-              Conversational Business Intelligence over Monday.com Deals & Work Orders
-            </div>
+          <button
+            className="sidebar-toggle-btn"
+            onClick={() => setSidebarOpen(!sidebarOpen)}
+            title="Toggle sidebar"
+            aria-label="Toggle sidebar"
+          >
+            <HandDrawnSidebar size={18} />
+          </button>
+        </div>
+
+        <button className="btn-new-chat" onClick={handleClearSession} disabled={loading}>
+          <HandDrawnPlus size={16} />
+          <span>New chat</span>
+        </button>
+
+        <div className="sidebar-nav-section">
+          <div className="sidebar-nav-item">
+            <span className="nav-icon">📁</span>
+            <span>Projects</span>
+          </div>
+          <div className="sidebar-nav-item">
+            <span className="nav-icon">📄</span>
+            <span>Artifacts</span>
+          </div>
+          <div className="sidebar-nav-item">
+            <span className="nav-icon">&lt;/&gt;</span>
+            <span>Code</span>
+            <span className="upgrade-pill">Upgrade</span>
+          </div>
+          <div className="sidebar-nav-item">
+            <span className="nav-icon">⚙️</span>
+            <span>Customize</span>
           </div>
         </div>
 
-        <div className="header-actions">
-          {messages.length > 0 && (
+        <div className="sidebar-section-title">Pinned</div>
+        <div className="sidebar-history-list">
+          <div className="history-item" onClick={() => sendMessage("How's our pipeline looking for the energy sector this quarter?")}>
+            <span className="history-bullet">•</span>
+            <span className="history-text">Energy Sector Q3/Q4</span>
+          </div>
+          <div className="history-item" onClick={() => sendMessage("How's our open pipeline looking overall?")}>
+            <span className="history-bullet">•</span>
+            <span className="history-text">Pipeline Health Q3</span>
+          </div>
+        </div>
+
+        <div className="sidebar-section-title">Chats and tasks</div>
+        <div className="sidebar-history-list">
+          <div className="history-item" onClick={() => sendMessage("What's our win rate by sector?")}>
+            <span className="history-bullet">•</span>
+            <span className="history-text">Win rate by sector</span>
+          </div>
+          <div className="history-item" onClick={() => sendMessage("How much have we billed versus collected on mining work orders?")}>
+            <span className="history-bullet">•</span>
+            <span className="history-text">Mining Billed vs Collected</span>
+          </div>
+          <div className="history-item" onClick={() => sendMessage("Prepare a leadership update")}>
+            <span className="history-bullet">•</span>
+            <span className="history-text">Leadership briefing</span>
+          </div>
+        </div>
+
+        <div className="sidebar-footer">
+          <div className="sidebar-user-pill">
+            <span className="user-avatar-initial">A</span>
+            <div className="user-info-text">
+              <span className="user-name">Aditthya</span>
+              <span className="user-plan">Founder • Skylark Drones</span>
+            </div>
+          </div>
+        </div>
+      </aside>
+
+      {/* Main Chat Workspace */}
+      <div className="claude-main-workspace">
+        {/* Top Minimalist Header */}
+        <header className="claude-top-bar">
+          {!sidebarOpen && (
             <button
-              className="btn-header"
-              onClick={handleClearSession}
-              disabled={loading}
-              title="Start a new conversation"
-              aria-label="New Session"
+              className="sidebar-open-btn"
+              onClick={() => setSidebarOpen(true)}
+              title="Open sidebar"
+              aria-label="Open sidebar"
             >
-              <span>↺</span>
-              <span>New Session</span>
+              <HandDrawnSidebar size={18} />
             </button>
           )}
-        </div>
-      </header>
 
-      {/* Telemetry & Quality Strip */}
-      <StatusStrip status={status} loading={statusLoading} error={statusError} />
+          <div className="claude-top-brand">
+            <ClaudeLogo size={20} />
+            <span className="top-brand-text">Skylark BI Agent</span>
+            <span className="live-pill">LIVE BOARDS</span>
+          </div>
 
-      {/* Main Conversation Stream */}
-      <main
-        className="chat-area"
-        id="chat-area"
-        aria-label="Chat messages"
-        aria-live="polite"
-      >
-        {isEmpty ? (
-          <div className="empty-state">
-            <div className="hero-glow-card">
-              <div className="hero-icon-badge">📈</div>
-              <h2 className="hero-title">Executive Decision Intelligence</h2>
-              <p className="hero-description">
-                Ask questions across live deal pipelines, work order billings, sector margins, and
-                cash collections — backed by deterministic calculations and clear data-quality caveats.
-              </p>
-            </div>
+          <div className="claude-top-right">
+            <button
+              className="telemetry-pill-btn"
+              onClick={() => setShowStatusStrip(!showStatusStrip)}
+              title="Toggle Telemetry Audit Drawer"
+            >
+              <span className="beacon-dot" />
+              <span>Telemetry</span>
+            </button>
+            <span className="free-plan-tag">Read-Only • Monday.com</span>
+          </div>
+        </header>
 
-            <div className="chips-container">
-              <div className="chips-label">Suggested Founder Questions</div>
-              <div className="chips-grid" role="list" aria-label="Sample questions">
-                {SAMPLE_QUESTIONS.map((chip, i) => (
-                  <button
-                    key={i}
-                    className="chip"
-                    role="listitem"
-                    onClick={() => sendMessage(chip.query)}
-                    disabled={loading}
-                    id={`sample-chip-${i}`}
-                  >
-                    <span className="chip-icon">{chip.icon}</span>
-                    <div>
-                      <div style={{ fontWeight: 600, color: '#f8fafc', fontSize: '0.82rem' }}>
-                        {chip.label}
-                      </div>
-                      <div style={{ color: 'var(--text-secondary)', fontSize: '0.78rem' }}>
-                        {chip.query}
-                      </div>
+        {showStatusStrip && (
+          <StatusStrip status={status} loading={statusLoading} error={statusError} />
+        )}
+
+        {/* Scrollable Conversation Stream */}
+        <main className="claude-chat-scroll" id="claude-chat-container">
+          {isEmpty ? (
+            /* Claude Hero State matching user screenshot */
+            <div className="claude-hero-container">
+              <div className="claude-greeting-heading">
+                <ClaudeLogo size={36} className="hero-starburst" />
+                <h1 className="greeting-text">{getGreeting()}</h1>
+              </div>
+
+              {/* Centered Claude Input Box Capsule */}
+              <div className="claude-input-capsule">
+                <textarea
+                  ref={textareaRef}
+                  id="chat-input"
+                  className="claude-textarea"
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  onKeyDown={handleKeyDown}
+                  placeholder="How can I help you today?"
+                  disabled={loading}
+                  maxLength={MAX_CHARS + 50}
+                  rows={1}
+                  aria-label="Chat input"
+                />
+
+                <div className="claude-capsule-toolbar">
+                  <div className="toolbar-left">
+                    <button className="capsule-icon-btn" title="Add context">
+                      <HandDrawnPlus size={16} />
+                    </button>
+                    <div className="mode-toggle-group">
+                      <span className="mode-tab active">Chat</span>
+                      <span className="mode-tab">Cowork</span>
                     </div>
+                  </div>
+
+                  <div className="toolbar-right">
+                    <span className="model-selector-pill">
+                      Sonnet 3.5
+                      <span className="pill-arrow">▾</span>
+                    </span>
+                    <button className="capsule-icon-btn" title="Voice dictation">
+                      <HandDrawnMic size={16} />
+                    </button>
+                    <button className="capsule-icon-btn" title="Voice response">
+                      <HandDrawnWaveform size={16} />
+                    </button>
+                    <button
+                      id="send-btn"
+                      className={`claude-send-btn ${input.trim() && !loading ? 'ready' : ''}`}
+                      onClick={() => sendMessage(input)}
+                      disabled={loading || !input.trim() || input.length > MAX_CHARS}
+                      title="Send message"
+                      aria-label="Send message"
+                    >
+                      <HandDrawnSend size={16} />
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Claude Prompt Suggestion Pills */}
+              <div className="claude-chips-row">
+                {CLAUDE_PROMPTS.map((p, idx) => (
+                  <button
+                    key={idx}
+                    className="claude-prompt-pill"
+                    onClick={() => sendMessage(p.query)}
+                    disabled={loading}
+                  >
+                    <span className="pill-icon">{p.icon}</span>
+                    <span className="pill-text">{p.tag}</span>
+                    <span className="pill-query">({p.label})</span>
                   </button>
                 ))}
               </div>
             </div>
-          </div>
-        ) : (
-          <>
-            {messages.map((m, i) =>
-              m.role === 'user' ? (
-                <UserMessage key={i} msg={m} />
-              ) : (
-                <AssistantMessage key={i} msg={m} />
-              )
-            )}
-          </>
-        )}
+          ) : (
+            /* Active Message List */
+            <div className="claude-messages-wrapper">
+              {messages.map((m, idx) =>
+                m.role === 'user' ? (
+                  <UserMessage key={idx} msg={m} />
+                ) : (
+                  <AssistantMessage
+                    key={idx}
+                    msg={m}
+                    onRetry={() => {
+                      const prevUser = messages[idx - 1]?.content
+                      if (prevUser) sendMessage(prevUser)
+                    }}
+                  />
+                )
+              )}
 
-        {loading && <LoadingMessage startTime={loadingStart} />}
+              {loading && <LoadingMessage startTime={loadingStart} />}
 
-        {error && (
-          <div className="error-card" role="alert">
-            <p>
-              {error.message.startsWith('⚠️') || error.message.startsWith('⚠')
-                ? error.message
-                : `⚠️ ${error.message}`}
-            </p>
+              {/* Error card with situation message and Lottie animation */}
+              {error && (
+                <ErrorCard
+                  error={error}
+                  onRetry={handleRetry}
+                  retryCountdown={retryCountdown}
+                  onRunDeterministic={() => {
+                    const lastUser = [...messages].reverse().find((m) => m.role === 'user')
+                    if (lastUser) sendMessage(lastUser.content)
+                  }}
+                />
+              )}
 
-            {error.retryAfter && retryCountdown > 0 && (
-              <div className="error-countdown-box">
-                <span>⏱️</span>
-                <span>Rate limit cooling down: retry in {retryCountdown}s</span>
+              <div ref={chatBottomRef} />
+            </div>
+          )}
+        </main>
+
+        {/* Floating Bottom Input when chat has active messages */}
+        {!isEmpty && (
+          <div className="claude-bottom-dock">
+            <div className="claude-input-capsule in-chat">
+              <textarea
+                ref={textareaRef}
+                className="claude-textarea"
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={handleKeyDown}
+                placeholder="Reply to Skylark BI Agent…"
+                disabled={loading}
+                maxLength={MAX_CHARS + 50}
+                rows={1}
+                aria-label="Chat input"
+              />
+
+              <div className="claude-capsule-toolbar">
+                <div className="toolbar-left">
+                  <button className="capsule-icon-btn" title="Add context">
+                    <HandDrawnPlus size={16} />
+                  </button>
+                  <span className="model-selector-pill in-chat">
+                    Sonnet 3.5 Medium
+                  </span>
+                </div>
+
+                <div className="toolbar-right">
+                  <span className="char-count-minimal">
+                    {input.length}/{MAX_CHARS}
+                  </span>
+                  <button
+                    className={`claude-send-btn ${input.trim() && !loading ? 'ready' : ''}`}
+                    onClick={() => sendMessage(input)}
+                    disabled={loading || !input.trim() || input.length > MAX_CHARS}
+                    title="Send message"
+                  >
+                    <HandDrawnSend size={16} />
+                  </button>
+                </div>
               </div>
-            )}
-
-            {(!error.retryAfter || retryCountdown === 0) && (
-              <button className="btn-retry" onClick={handleRetry} id="retry-btn">
-                ↩ Retry Request
-              </button>
-            )}
-          </div>
-        )}
-
-        <div ref={chatBottomRef} />
-      </main>
-
-      {/* Floating Executive Prompt Dock */}
-      <div className="input-area">
-        <div className="input-dock">
-          <div className="input-wrap">
-            <textarea
-              ref={textareaRef}
-              id="chat-input"
-              className="input-textarea"
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder="Ask about pipeline value, work orders, win rates, or sector breakdown…"
-              disabled={loading}
-              maxLength={MAX_CHARS + 50}
-              rows={1}
-              aria-label="Chat input"
-              aria-describedby="char-counter"
-            />
-            <div className="input-footer">
-              <span className="keyboard-hint">
-                Press <kbd style={{ background: 'rgba(255,255,255,0.08)', padding: '1px 5px', borderRadius: 4 }}>Enter ↵</kbd> to send • <kbd style={{ background: 'rgba(255,255,255,0.08)', padding: '1px 5px', borderRadius: 4 }}>Shift+Enter</kbd> for newline
-              </span>
-              <span
-                id="char-counter"
-                className={`char-count ${input.length > MAX_CHARS ? 'over' : ''}`}
-              >
-                {input.length}/{MAX_CHARS}
-              </span>
             </div>
           </div>
-
-          <button
-            id="send-btn"
-            className="btn-send"
-            onClick={() => sendMessage(input)}
-            disabled={loading || !input.trim() || input.length > MAX_CHARS}
-            aria-label="Send message"
-            title="Send query"
-          >
-            ➤
-          </button>
-        </div>
+        )}
       </div>
     </div>
   )
