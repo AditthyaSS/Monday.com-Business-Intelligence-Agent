@@ -129,12 +129,13 @@ class ToolExecutor:
 # ---------------------------------------------------------------------------
 
 _KEYWORD_ROUTES: list[tuple[list[str], str, dict]] = [
-    (["pipeline", "open deal", "opportunity", "opportunities"], "pipeline_summary", {}),
-    (["win rate", "won", "dead", "lost", "close rate"], "pipeline_summary", {}),
-    (["billed", "collected", "receivable", "billing", "invoice", "work order"], "work_order_summary", {}),
-    (["sector", "sector overview", "cross board", "cross-board"], "sector_overview", {}),
-    (["leadership", "update", "brief", "summary report"], "leadership_brief", {}),
-    (["data quality", "quality", "reliability", "missing", "anomal"], "data_quality_report", {}),
+    (["pipeline and operational", "pipeline and work order", "pipeline and operation", "pipeline and billing", "cross board", "cross-board", "deals and work orders"], "sector_overview", {}),
+    (["highest win rate", "best win rate", "win rate", "win-rate", "winrate", "won", "dead", "lost", "close rate"], "sector_overview", {}),
+    (["pipeline", "open deal", "opportunity", "opportunities", "largest pipeline", "biggest pipeline", "deal value", "overdue", "stale close", "average deal"], "pipeline_summary", {}),
+    (["billed", "collected", "receivable", "billing", "invoice", "work order", "to bill", "to-bill", "over-billed", "overbilled", "operational issue", "operations"], "work_order_summary", {}),
+    (["sector", "sector overview", "compare sectors"], "sector_overview", {}),
+    (["leadership", "update", "brief", "summary report", "biggest risks", "risk", "opportunities"], "leadership_brief", {}),
+    (["data quality", "quality", "reliability", "missing", "anomal", "excluded", "exclusion"], "data_quality_report", {}),
 ]
 
 
@@ -226,7 +227,8 @@ def run_agent(
         if llm_calls >= max_llm_calls:
             break
         try:
-            response = llm.generate(system_prompt, messages, TOOL_DECLARATIONS)
+            available_tools = [] if trace else TOOL_DECLARATIONS
+            response = llm.generate(system_prompt, messages, available_tools)
             llm_calls += 1
             model_used = response.model_used
         except LLMQuotaExceeded as exc:
@@ -287,10 +289,12 @@ def run_agent(
                 caveats=result.get("caveats", []),
                 assumptions=result.get("assumptions_used", []),
             ))
-            # Serialize result for LLM context (display + key data)
+            # Serialize result for LLM context (display + structured data)
+            data_str = json.dumps(result.get("data", {}), default=str)
             tool_result_parts.append(
                 f"Tool: {tc.name}\n"
-                f"Summary: {result.get('display', {}).get('summary', '')}\n"
+                f"Summary:\n{result.get('display', {}).get('summary', '')}\n\n"
+                f"Structured Data (JSON):\n{data_str}\n\n"
                 f"Caveats: {'; '.join(result.get('caveats', []))}\n"
                 f"Assumptions: {'; '.join(result.get('assumptions_used', []))}\n"
                 f"Data as of: {result.get('data_as_of', 'unknown')}\n"
@@ -301,7 +305,7 @@ def run_agent(
         # Add tool results to message history for next LLM call
         combined = "\n---\n".join(tool_result_parts)
         messages.append(LLMMessage(role="assistant", content=f"[called tools]\n{combined}"))
-        messages.append(LLMMessage(role="user", content="Please provide the final answer based on the tool results above."))
+        messages.append(LLMMessage(role="user", content="Please provide the final answer based on the tool results above, directly answering the question with supporting numbers, counts, and caveats."))
 
     # If we ran out of LLM calls, return last tool result in degraded style
     if trace:

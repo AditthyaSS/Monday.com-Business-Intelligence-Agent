@@ -81,7 +81,7 @@ class GeminiProvider:
         config_kwargs: dict[str, Any] = {
             "system_instruction": system,
             "tool_config": gtypes.ToolConfig(
-                function_calling_config=gtypes.FunctionCallingConfig(mode="ANY")
+                function_calling_config=gtypes.FunctionCallingConfig(mode="AUTO")
             ) if sdk_tool else None,
             "automatic_function_calling": gtypes.AutomaticFunctionCallingConfig(disable=True),
         }

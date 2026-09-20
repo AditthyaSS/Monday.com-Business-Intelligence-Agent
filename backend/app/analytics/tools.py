@@ -145,7 +145,10 @@ def pipeline_summary(
     total_count = len(df)
     with_value = df["value_inr"].notna()
     value_count = int(with_value.sum())
+    missing_value_count = total_count - value_count
     total_value = float(df.loc[with_value, "value_inr"].sum()) if value_count > 0 else 0.0
+    mean_val = float(round(total_value / value_count, 2)) if value_count > 0 else 0.0
+    median_val = float(df.loc[with_value, "value_inr"].median()) if value_count > 0 else 0.0
 
     # Stale close dates
     stale = df["quality_flags"].apply(lambda f: "open_close_date_past" in f)
@@ -169,6 +172,12 @@ def pipeline_summary(
         .sort_values("value", ascending=False)
     )
     sector_agg["value_fmt"] = sector_agg["value"].apply(fmt_inr)
+    sector_agg_records = sector_agg.to_dict("records")
+    top_sector_by_value = sector_agg_records[0] if sector_agg_records else None
+
+    sector_by_count = sector_agg.sort_values("count", ascending=False)
+    sector_by_count_records = sector_by_count.to_dict("records")
+    top_sector_by_count = sector_by_count_records[0] if sector_by_count_records else None
 
     # Top 5 deals (by value)
     top5 = (
@@ -179,15 +188,48 @@ def pipeline_summary(
     top5["value_fmt"] = top5["value_inr"].apply(fmt_inr)
     top5_list = top5.to_dict("records")
 
+    # Stale deals sample
+    stale_sample = []
+    if stale_count:
+        stale_df = df[stale].sort_values("value_inr", ascending=False)
+        for _, r in stale_df.head(5).iterrows():
+            stale_sample.append({
+                "deal_name": r.get("deal_name"),
+                "sector": r.get("sector"),
+                "value_fmt": fmt_inr(float(r["value_inr"])) if pd.notna(r.get("value_inr")) else "Missing",
+                "tentative_close": str(r.get("tentative_close")) if r.get("tentative_close") else None,
+            })
+
     # Concentration
     conc = _concentration(df.loc[with_value, "value_inr"])
 
     if stale_count:
         caveats.append(f"{stale_count} of {total_count} open deals ({stale_pct}%) have a Tentative Close Date in the past.")
     if value_count < total_count:
-        caveats.append(f"Deal value present for {value_count} of {total_count} open deals; missing excluded from totals.")
+        caveats.append(f"Deal value present for {value_count} of {total_count} open deals; {missing_value_count} missing excluded from totals.")
     if conc.get("top3_share") and conc["top3_share"] > 60:
         caveats.append(f"Top-3 deals represent {conc['top3_share']}% of open pipeline value — high concentration.")
+
+    summary_lines = [
+        f"**Open pipeline:** {total_count} deals totaling {fmt_inr(total_value)} "
+        f"(value present for {value_count} of {total_count}; {missing_value_count} missing value).",
+        f"**Deal sizes:** Average: {fmt_inr(mean_val)}, Median: {fmt_inr(median_val)}.",
+    ]
+    if top_sector_by_value:
+        summary_lines.append(
+            f"**Largest sector by value:** {top_sector_by_value['sector']} "
+            f"({top_sector_by_value['value_fmt']}, {top_sector_by_value['count']} deals)."
+        )
+    if top_sector_by_count:
+        summary_lines.append(
+            f"**Most open deals:** {top_sector_by_count['sector']} "
+            f"({top_sector_by_count['count']} deals, {top_sector_by_count['value_fmt']})."
+        )
+    if stale_count:
+        summary_lines.append(
+            f"**Overdue close dates:** {stale_count} of {total_count} open deals ({stale_pct}%) "
+            f"have tentative close dates in the past."
+        )
 
     return {
         "tool": "pipeline_summary",
@@ -196,19 +238,27 @@ def pipeline_summary(
         "data": {
             "total_count": total_count,
             "value_count": value_count,
+            "missing_value_count": missing_value_count,
             "total_value": total_value,
+            "total_value_fmt": fmt_inr(total_value),
+            "mean_deal_value": mean_val,
+            "mean_deal_value_fmt": fmt_inr(mean_val),
+            "median_deal_value": median_val,
+            "median_deal_value_fmt": fmt_inr(median_val),
             "stale_close_count": stale_count,
+            "stale_close_pct": stale_pct,
+            "stale_deals_sample": stale_sample,
             "concentration": conc,
             "by_stage": stage_agg.to_dict("records"),
-            "by_sector": sector_agg.to_dict("records"),
+            "by_sector": sector_agg_records,
+            "by_sector_by_count": sector_by_count_records,
+            "top_sector_by_value": top_sector_by_value,
+            "top_sector_by_count": top_sector_by_count,
             "top_5_deals": top5_list,
         },
         "display": {
             "total_value_fmt": fmt_inr(total_value),
-            "summary": (
-                f"Open pipeline: {total_count} deals, {fmt_inr(total_value)} "
-                f"(value present for {value_count} of {total_count})."
-            ),
+            "summary": "\n".join(summary_lines),
             "concentration": (
                 f"Top-3 deals: {conc.get('top3_share', 'n/a')}% of total. "
                 f"Excluding top 3: {conc.get('total_excl_top3_fmt', 'n/a')}."
@@ -317,24 +367,75 @@ def work_order_summary(
 
     # Anomalies
     anomalies = []
+    anomaly_details = []
+    over_billed_count = 0
+    negative_to_bill_count = 0
     for _, row in df.iterrows():
         flags = row.get("quality_flags", [])
         if "over_billed" in flags:
-            anomalies.append(f"Over-billed: {row.get('wo_id', '?')} (deal: {row.get('deal_name', '?')})")
+            over_billed_count += 1
+            wo_id = row.get("wo_id", "?")
+            deal_name = row.get("deal_name", "?")
+            sec = row.get("sector", "Unspecified")
+            anomalies.append(f"Over-billed: {wo_id} (deal: {deal_name})")
+            anomaly_details.append({
+                "wo_id": wo_id,
+                "deal_name": deal_name,
+                "sector": sec,
+                "issue": "Over-billed",
+            })
         if "negative_to_bill" in flags:
-            anomalies.append(f"Negative to-bill: {row.get('wo_id', '?')}")
+            negative_to_bill_count += 1
+            wo_id = row.get("wo_id", "?")
+            deal_name = row.get("deal_name", "?")
+            sec = row.get("sector", "Unspecified")
+            anomalies.append(f"Negative to-bill: {wo_id}")
+            anomaly_details.append({
+                "wo_id": wo_id,
+                "deal_name": deal_name,
+                "sector": sec,
+                "issue": "Negative to-bill",
+            })
 
-    # By sector
+    # By sector aggregation with order_value and billed_value
+    df["_sec_order"] = order_col
+    df["_sec_billed"] = billed_col
     sector_agg = (
-        df.groupby("sector")
-        .agg(count=("wo_id", "count"))
+        df.groupby("sector", dropna=False)
+        .agg(
+            wo_count=("wo_id", "count"),
+            order_value=("_sec_order", "sum"),
+            billed_value=("_sec_billed", "sum"),
+        )
         .reset_index()
+        .sort_values("order_value", ascending=False)
     )
+    sector_agg["order_value_fmt"] = sector_agg["order_value"].apply(fmt_inr)
+    sector_agg["billed_value_fmt"] = sector_agg["billed_value"].apply(fmt_inr)
+    sector_agg_records = sector_agg.to_dict("records")
+    top_wo_sector = sector_agg_records[0] if sector_agg_records else None
 
     if order_val < billed_val:
         caveats.append("Total billed exceeds total order value (anomalies present).")
     if anomalies:
-        caveats.append(f"{len(anomalies)} billing anomaly(s) detected.")
+        caveats.append(f"{len(anomalies)} billing anomaly(s) detected ({over_billed_count} over-billed, {negative_to_bill_count} negative to-bill).")
+
+    summary_lines = [
+        f"**Work orders:** {len(df)} total. Order value: {fmt_inr(order_val)}, "
+        f"Billed: {fmt_inr(billed_val)} ({billing_pct}%), "
+        f"Collected: {fmt_inr(collected_val)} ({collection_pct}% of billed), "
+        f"Receivable: {fmt_inr(receivable_val)}, "
+        f"Still to bill: {fmt_inr(to_bill_val)}.",
+    ]
+    if top_wo_sector:
+        summary_lines.append(
+            f"**Highest order value sector:** {top_wo_sector['sector']} "
+            f"({top_wo_sector['order_value_fmt']}, {top_wo_sector['wo_count']} work orders, {top_wo_sector['billed_value_fmt']} billed)."
+        )
+    if anomalies:
+        summary_lines.append(
+            f"**Billing anomalies:** {len(anomalies)} detected ({over_billed_count} over-billed, {negative_to_bill_count} negative to-bill)."
+        )
 
     return {
         "tool": "work_order_summary",
@@ -343,24 +444,27 @@ def work_order_summary(
         "data": {
             "count": len(df),
             "order_value": order_val,
+            "order_value_fmt": fmt_inr(order_val),
             "billed": billed_val,
+            "billed_fmt": fmt_inr(billed_val),
             "to_bill": to_bill_val,
+            "to_bill_fmt": fmt_inr(to_bill_val),
             "collected": collected_val,
+            "collected_fmt": fmt_inr(collected_val),
             "receivable": receivable_val,
+            "receivable_fmt": fmt_inr(receivable_val),
             "billing_pct": billing_pct,
             "collection_pct": collection_pct,
             "exec_status_mix": exec_counts,
             "anomalies": anomalies[:10],
-            "by_sector": sector_agg.to_dict("records"),
+            "anomaly_details": anomaly_details[:10],
+            "over_billed_count": over_billed_count,
+            "negative_to_bill_count": negative_to_bill_count,
+            "by_sector": sector_agg_records,
+            "top_sector_by_order_value": top_wo_sector,
         },
         "display": {
-            "summary": (
-                f"{len(df)} work orders. Order value: {fmt_inr(order_val)}, "
-                f"Billed: {fmt_inr(billed_val)} ({billing_pct}%), "
-                f"Collected: {fmt_inr(collected_val)} ({collection_pct}%), "
-                f"Receivable: {fmt_inr(receivable_val)}, "
-                f"Still to bill: {fmt_inr(to_bill_val)}."
-            ),
+            "summary": "\n".join(summary_lines),
         },
         "coverage": [
             {"metric": "order_value", "used": int(order_col.notna().sum()), "total": len(df), "note": "Rows with order amount"},
@@ -408,50 +512,150 @@ def sector_overview(
         open_by_sector
         .merge(won_by_sector, on="sector", how="outer")
         .merge(dead_by_sector, on="sector", how="outer")
-        .fillna(0)
     )
-    deal_sector["win_rate"] = deal_sector.apply(
+    for col in ["open_count", "open_value", "won", "dead"]:
+        if col in deal_sector.columns:
+            deal_sector[col] = pd.to_numeric(deal_sector[col], errors="coerce").fillna(0)
+
+    # WO side
+    wo = wo_df.copy()
+    if len(wo) > 0 and "sector" in wo.columns:
+        if gst_basis == "excl":
+            wo["_order"] = wo["amount_excl"] if "amount_excl" in wo.columns else 0.0
+            wo["_billed"] = wo["billed_excl"] if "billed_excl" in wo.columns else 0.0
+            rec_series = wo["receivable"] if "receivable" in wo.columns else pd.Series([None] * len(wo))
+            wo["_receivable"] = rec_series.apply(
+                lambda x: x / GST_RATE if x is not None and not math.isnan(float(x if x else 0)) else None
+            )
+        else:
+            wo["_order"] = wo["amount_incl"] if "amount_incl" in wo.columns else 0.0
+            wo["_billed"] = wo["billed_incl"] if "billed_incl" in wo.columns else 0.0
+            wo["_receivable"] = wo["receivable"] if "receivable" in wo.columns else pd.Series([None] * len(wo))
+
+        wo_id_col = "wo_id" if "wo_id" in wo.columns else "sector"
+        wo_by_sector = (
+            wo.groupby("sector")
+            .agg(wo_count=(wo_id_col, "count"), wo_value=("_order", "sum"), wo_billed=("_billed", "sum"), wo_receivable=("_receivable", "sum"))
+            .reset_index()
+        )
+    else:
+        wo_by_sector = pd.DataFrame(columns=["sector", "wo_count", "wo_value", "wo_billed", "wo_receivable"])
+
+    merged = deal_sector.merge(wo_by_sector, on="sector", how="outer")
+    num_cols = ["open_count", "open_value", "won", "dead", "wo_count", "wo_value", "wo_billed", "wo_receivable"]
+    for col in num_cols:
+        if col in merged.columns:
+            merged[col] = pd.to_numeric(merged[col], errors="coerce").fillna(0)
+
+    merged = merged[merged["sector"] != ""]
+    merged = merged[merged["sector"].notna()]
+
+    # Win rate = Won / (Won + Dead) strictly. None when Won + Dead == 0.
+    merged["win_rate"] = merged.apply(
         lambda r: round(r["won"] / (r["won"] + r["dead"]) * 100, 1)
         if (r["won"] + r["dead"]) > 0 else None,
         axis=1,
     )
 
-    # WO side
-    wo = wo_df.copy()
-    if gst_basis == "excl":
-        wo["_order"] = wo["amount_excl"]
-        wo["_billed"] = wo["billed_excl"]
-        wo["_receivable"] = wo["receivable"].apply(lambda x: x / GST_RATE if x is not None else None)
-    else:
-        wo["_order"] = wo["amount_incl"]
-        wo["_billed"] = wo["billed_incl"]
-        wo["_receivable"] = wo["receivable"]
-
-    wo_by_sector = (
-        wo.groupby("sector")
-        .agg(wo_count=("wo_id", "count"), wo_value=("_order", "sum"), wo_billed=("_billed", "sum"), wo_receivable=("_receivable", "sum"))
-        .reset_index()
-    )
-
-    merged = deal_sector.merge(wo_by_sector, on="sector", how="outer").fillna(0)
-    merged = merged[merged["sector"] != ""]
-
     rows = []
     for _, r in merged.iterrows():
+        won_cnt = int(r.get("won", 0))
+        dead_cnt = int(r.get("dead", 0))
+        closed_cnt = won_cnt + dead_cnt
+        wr = r.get("win_rate")
+        wr_pct = float(wr) if wr is not None and not pd.isna(wr) else None
+
         rows.append({
             "sector": r["sector"],
             "open_count": int(r.get("open_count", 0)),
             "open_value": float(r.get("open_value", 0)),
             "open_value_fmt": fmt_inr(float(r.get("open_value", 0))),
-            "won": int(r.get("won", 0)),
-            "dead": int(r.get("dead", 0)),
-            "win_rate_pct": r.get("win_rate"),
+            "won": won_cnt,
+            "dead": dead_cnt,
+            "closed_deals": closed_cnt,
+            "win_rate_pct": wr_pct,
             "wo_count": int(r.get("wo_count", 0)),
             "wo_value": float(r.get("wo_value", 0)),
             "wo_value_fmt": fmt_inr(float(r.get("wo_value", 0))),
+            "wo_billed": float(r.get("wo_billed", 0)),
             "wo_billed_fmt": fmt_inr(float(r.get("wo_billed", 0))),
+            "wo_receivable": float(r.get("wo_receivable", 0)),
             "wo_receivable_fmt": fmt_inr(float(r.get("wo_receivable", 0))),
         })
+
+    # Rankings
+    # 1. By win rate (only sectors where closed_deals > 0)
+    with_closed = [r for r in rows if r["closed_deals"] > 0]
+    by_win_rate = sorted(with_closed, key=lambda x: (x["win_rate_pct"] or 0, x["won"]), reverse=True)
+
+    top_win_rate_overall = []
+    if by_win_rate:
+        max_rate = by_win_rate[0]["win_rate_pct"]
+        top_win_rate_overall = [r for r in by_win_rate if r["win_rate_pct"] == max_rate]
+
+    # Substantial volume sectors (closed_deals >= 5)
+    volume_sectors = [r for r in with_closed if r["closed_deals"] >= 5]
+    by_win_rate_volume = sorted(volume_sectors, key=lambda x: (x["win_rate_pct"] or 0, x["won"]), reverse=True)
+    top_win_rate_established = by_win_rate_volume[0] if by_win_rate_volume else None
+
+    # 2. By open pipeline value
+    by_open_pipeline = sorted(rows, key=lambda x: x["open_value"], reverse=True)
+    top_pipeline_sector = by_open_pipeline[0] if by_open_pipeline and by_open_pipeline[0]["open_value"] > 0 else None
+
+    # 3. By open deal count
+    by_open_deals = sorted(rows, key=lambda x: x["open_count"], reverse=True)
+    top_open_deals_sector = by_open_deals[0] if by_open_deals and by_open_deals[0]["open_count"] > 0 else None
+
+    # 4. By work order value
+    by_wo_value = sorted(rows, key=lambda x: x["wo_value"], reverse=True)
+    top_wo_sector = by_wo_value[0] if by_wo_value and by_wo_value[0]["wo_value"] > 0 else None
+
+    # Dynamic summary
+    summary_lines = []
+    if top_win_rate_overall:
+        if len(top_win_rate_overall) == 1:
+            top = top_win_rate_overall[0]
+            summary_lines.append(
+                f"**Highest win rate:** {top['sector']} at {top['win_rate_pct']}%. "
+                f"That is based on {top['won']} Won deals and {top['dead']} Dead deals "
+                f"({top['closed_deals']} closed deals)."
+            )
+        else:
+            tied_details = ", ".join(
+                f"**{s['sector']}** at {s['win_rate_pct']}% ({s['won']} Won, {s['dead']} Dead)"
+                for s in top_win_rate_overall
+            )
+            summary_lines.append(f"**Highest win rate (tied):** {tied_details}.")
+
+        if top_win_rate_established and top_win_rate_established not in top_win_rate_overall:
+            est = top_win_rate_established
+            summary_lines.append(
+                f"Among established sectors with significant deal volume (≥5 closed deals), "
+                f"**{est['sector']}** has the highest win rate at {est['win_rate_pct']}%, "
+                f"based on {est['won']} Won deals and {est['dead']} Dead deals ({est['closed_deals']} closed deals)."
+            )
+
+    if top_pipeline_sector:
+        summary_lines.append(
+            f"**Largest open pipeline:** {top_pipeline_sector['sector']} with {top_pipeline_sector['open_value_fmt']} "
+            f"across {top_pipeline_sector['open_count']} open deals."
+        )
+
+    if top_wo_sector:
+        summary_lines.append(
+            f"**Largest work order value:** {top_wo_sector['sector']} with {top_wo_sector['wo_value_fmt']} "
+            f"across {top_wo_sector['wo_count']} work orders ({top_wo_sector['wo_billed_fmt']} billed)."
+        )
+
+    summary_lines.append("\n**Sector Breakdown:**")
+    for r in sorted(rows, key=lambda x: (x["open_value"], x["wo_value"]), reverse=True):
+        if r["win_rate_pct"] is not None:
+            wr_str = f"{r['win_rate_pct']}% ({r['won']} Won / {r['dead']} Dead)"
+        else:
+            wr_str = "N/A (0 closed deals)"
+        summary_lines.append(
+            f"- **{r['sector']}**: Win rate {wr_str} | Open: {r['open_count']} deals ({r['open_value_fmt']}) | WOs: {r['wo_count']} orders ({r['wo_value_fmt']})"
+        )
 
     data_as_of_d = _data_as_of(deals_df, ["tentative_close", "actual_close", "created"])
     data_as_of_w = _data_as_of(wo_df, ["po_date", "last_invoice_date"])
@@ -460,9 +664,22 @@ def sector_overview(
     return {
         "tool": "sector_overview",
         "no_data_in_period": False,
-        "data": {"rows": rows},
+        "data": {
+            "rows": rows,
+            "rankings": {
+                "by_win_rate": by_win_rate,
+                "top_win_rate_overall": top_win_rate_overall,
+                "top_win_rate_established": top_win_rate_established,
+                "by_open_pipeline": by_open_pipeline,
+                "top_pipeline_sector": top_pipeline_sector,
+                "by_open_deals": by_open_deals,
+                "top_open_deals_sector": top_open_deals_sector,
+                "by_wo_value": by_wo_value,
+                "top_wo_sector": top_wo_sector,
+            },
+        },
         "display": {
-            "summary": f"Sector overview across {len(deals_df)} deals and {len(wo_df)} work orders.",
+            "summary": "\n".join(summary_lines),
         },
         "coverage": [],
         "caveats": caveats,
@@ -547,9 +764,13 @@ def leadership_brief(
 
     display_lines = [
         "## Leadership Update",
-        f"**Pipeline:** {pipe['display'].get('summary', '')}",
-        f"**Work Orders:** {wo['display'].get('summary', '')}",
-        f"**Win Rate:** {win_rate}% (won {won} of {won + dead} closed deals)",
+        f"**Win Rate:** {win_rate}% (won {won} of {won + dead} closed deals)" if win_rate is not None else "**Win Rate:** N/A (0 closed deals)",
+        "",
+        "### Pipeline Status",
+        pipe['display'].get('summary', ''),
+        "",
+        "### Work Orders & Billing",
+        wo['display'].get('summary', ''),
         "",
         "### Top Risks",
     ] + [f"- {r}" for r in risks[:3]] + [
