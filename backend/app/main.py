@@ -50,6 +50,7 @@ app = FastAPI(
     title="Skylark BI Agent",
     docs_url="/api/docs",
     openapi_url="/api/openapi.json",
+    redirect_slashes=False,
 )
 
 app.add_middleware(
