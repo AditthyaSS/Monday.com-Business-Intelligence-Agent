@@ -5,17 +5,22 @@ import sys
 import os
 import traceback
 
-# Add backend/ to Python path
+# Add backend/ and root to Python path
 _here = os.path.dirname(os.path.abspath(__file__))
 _backend = os.path.normpath(os.path.join(_here, "..", "backend"))
+_root = os.path.normpath(os.path.join(_here, ".."))
+
 if _backend not in sys.path:
     sys.path.insert(0, _backend)
+if _root not in sys.path:
+    sys.path.insert(0, _root)
 
 try:
     from app.main import app  # noqa: F401
 
     @app.get("/api/index.py")
     @app.get("/api")
+    @app.get("/api/")
     def _api_index():
         return {"status": "ok", "service": "Skylark BI Agent API"}
 except Exception as _exc:

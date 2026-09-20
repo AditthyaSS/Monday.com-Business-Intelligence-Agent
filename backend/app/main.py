@@ -308,6 +308,8 @@ def health() -> dict:
 
 @app.get("/api/data-status")
 @app.get("/data-status")
+@app.get("/api/data_status")
+@app.get("/data_status")
 def data_status() -> dict:
     _reset_daily_counter()
     try:
@@ -347,7 +349,7 @@ def data_status() -> dict:
         open_mask = _deals_df["status"] == "Open"
         open_deals_count = int(open_mask.sum())
         if "deal_value" in _deals_df.columns:
-            from normalize.common import fmt_inr
+            from app.normalize.common import fmt_inr
             open_pipeline_val = fmt_inr(float(_deals_df.loc[open_mask, "deal_value"].dropna().sum()))
 
     return {
