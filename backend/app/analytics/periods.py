@@ -10,7 +10,10 @@ from dataclasses import dataclass
 from datetime import date, timedelta
 from typing import Literal
 
-PeriodSpec = Literal["all_time", "this_quarter", "last_quarter", "this_fy", "last_fy", "ytd"]
+PeriodSpec = Literal[
+    "all_time", "this_quarter", "last_quarter", "this_fy", "last_fy", "previous_fy",
+    "this_month", "last_month", "recent", "ytd"
+]
 
 
 @dataclass
@@ -64,21 +67,24 @@ def resolve_period(spec: str, today: date, fy_start_month: int = 4) -> Period:
     """Convert a period spec to a Period with concrete dates.
 
     spec options:
-      all_time, this_quarter, last_quarter, this_fy, last_fy, ytd
+      all_time, this_quarter, last_quarter, this_fy, last_fy, previous_fy,
+      this_month, last_month, recent, ytd
     """
-    if spec == "all_time":
-        return Period(spec=spec, start=None, end=None, label="All time")
+    norm_spec = spec.strip().casefold().replace("-", "_").replace(" ", "_") if spec else "all_time"
+
+    if norm_spec in ("all_time", "all", "overall", "total"):
+        return Period(spec="all_time", start=None, end=None, label="All time")
 
     fy_end, q = _fy_quarter(today, fy_start_month)
 
-    if spec == "this_quarter":
+    if norm_spec in ("this_quarter", "current_quarter"):
         start, end = _quarter_bounds(fy_end, q, fy_start_month)
         s_str = start.strftime("%d %b").lstrip("0")
         e_str = end.strftime("%d %b %Y").lstrip("0")
         label = f"Q{q} FY{fy_end-1}-{str(fy_end)[-2:]} ({s_str} to {e_str})"
-        return Period(spec=spec, start=start, end=end, label=label)
+        return Period(spec="this_quarter", start=start, end=end, label=label)
 
-    if spec == "last_quarter":
+    if norm_spec in ("last_quarter", "previous_quarter", "prev_quarter"):
         prev_q = q - 1
         prev_fy = fy_end
         if prev_q == 0:
@@ -86,23 +92,46 @@ def resolve_period(spec: str, today: date, fy_start_month: int = 4) -> Period:
             prev_fy -= 1
         start, end = _quarter_bounds(prev_fy, prev_q, fy_start_month)
         label = f"Q{prev_q} FY{prev_fy-1}-{str(prev_fy)[-2:]} ({start} to {end})"
-        return Period(spec=spec, start=start, end=end, label=label)
+        return Period(spec="last_quarter", start=start, end=end, label=label)
 
-    if spec == "this_fy":
+    if norm_spec in ("this_month", "current_month"):
+        start = date(today.year, today.month, 1)
+        next_month = today.month + 1 if today.month < 12 else 1
+        next_year = today.year if today.month < 12 else today.year + 1
+        end = date(next_year, next_month, 1) - timedelta(days=1)
+        label = f"{today.strftime('%B %Y')} ({start} to {end})"
+        return Period(spec="this_month", start=start, end=end, label=label)
+
+    if norm_spec in ("last_month", "previous_month", "prev_month"):
+        prev_m = today.month - 1 if today.month > 1 else 12
+        prev_y = today.year if today.month > 1 else today.year - 1
+        start = date(prev_y, prev_m, 1)
+        end = date(today.year, today.month, 1) - timedelta(days=1)
+        label = f"{start.strftime('%B %Y')} ({start} to {end})"
+        return Period(spec="last_month", start=start, end=end, label=label)
+
+    if norm_spec in ("recent", "recently"):
+        # Trailing 90 days
+        start = today - timedelta(days=90)
+        label = f"Recent ({start} to {today})"
+        return Period(spec="recent", start=start, end=today, label=label)
+
+    if norm_spec in ("this_fy", "current_fy", "this_fiscal_year", "current_fiscal_year"):
         fy_b = fy_end - 1
         start = date(fy_b, fy_start_month, 1)
         end = date(fy_end, fy_start_month, 1) - timedelta(days=1)
-        return Period(spec=spec, start=start, end=end, label=f"FY{fy_b}-{str(fy_end)[-2:]}")
+        return Period(spec="this_fy", start=start, end=end, label=f"FY{fy_b}-{str(fy_end)[-2:]}")
 
-    if spec == "last_fy":
+    if norm_spec in ("last_fy", "previous_fy", "prev_fy", "previous_fiscal_year", "last_fiscal_year"):
         fy_b = fy_end - 2
         start = date(fy_b, fy_start_month, 1)
         end = date(fy_end - 1, fy_start_month, 1) - timedelta(days=1)
-        return Period(spec=spec, start=start, end=end, label=f"FY{fy_b}-{str(fy_end-1)[-2:]}")
+        return Period(spec="last_fy", start=start, end=end, label=f"FY{fy_b}-{str(fy_end-1)[-2:]}")
 
-    if spec == "ytd":
+    if norm_spec in ("ytd", "year_to_date"):
         fy_b = fy_end - 1
         start = date(fy_b, fy_start_month, 1)
-        return Period(spec=spec, start=start, end=today, label=f"FY{fy_b}-{str(fy_end)[-2:]} YTD")
+        return Period(spec="ytd", start=start, end=today, label=f"FY{fy_b}-{str(fy_end)[-2:]} YTD")
 
-    raise ValueError(f"Unknown period spec: {spec!r}")
+    # Fallback to all_time with original spec recorded
+    return Period(spec="all_time", start=None, end=None, label=f"All time (unrecognized period: {spec})")

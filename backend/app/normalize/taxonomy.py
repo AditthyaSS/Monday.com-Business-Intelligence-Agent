@@ -171,8 +171,12 @@ def canon_sector(raw: str | None) -> str:
 # Maps user-provided phrases (lowercased) to a list of canonical sector labels.
 SECTOR_SYNONYMS: dict[str, list[str]] = {
     "energy": ["Renewables", "Powerline"],
+    "clean energy": ["Renewables"],
+    "green energy": ["Renewables"],
     "solar": ["Renewables"],
+    "solar energy": ["Renewables"],
     "wind": ["Renewables"],
+    "wind energy": ["Renewables"],
     "renewable": ["Renewables"],
     "renewables": ["Renewables"],
     "power": ["Powerline"],
@@ -182,12 +186,22 @@ SECTOR_SYNONYMS: dict[str, list[str]] = {
     "rail": ["Railways"],
     "railway": ["Railways"],
     "railways": ["Railways"],
+    "train": ["Railways"],
+    "trains": ["Railways"],
     "mine": ["Mining"],
     "mines": ["Mining"],
     "mining": ["Mining"],
     "construction": ["Construction"],
+    "infra": ["Construction"],
+    "infrastructure": ["Construction"],
     "manufacturing": ["Manufacturing"],
+    "factory": ["Manufacturing"],
     "aviation": ["Aviation"],
+    "drones": ["Aviation"],
+    "security": ["Security & Surveillance"],
+    "surveillance": ["Security & Surveillance"],
+    "security and surveillance": ["Security & Surveillance"],
+    "security & surveillance": ["Security & Surveillance"],
     "others": ["Others"],
 }
 
@@ -197,10 +211,10 @@ def resolve_sector_phrase(phrase: str) -> list[str] | None:
     key = phrase.strip().casefold()
     if key in SECTOR_SYNONYMS:
         return SECTOR_SYNONYMS[key]
-    # Try partial match
-    for k, v in SECTOR_SYNONYMS.items():
+    # Try partial match (longer keys first to avoid short false matches)
+    for k in sorted(SECTOR_SYNONYMS.keys(), key=len, reverse=True):
         if k in key or key in k:
-            return v
+            return SECTOR_SYNONYMS[k]
     return None
 
 

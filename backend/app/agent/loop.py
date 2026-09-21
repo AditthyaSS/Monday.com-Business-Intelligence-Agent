@@ -1,7 +1,8 @@
 """Agent loop: call LLM -> execute tools -> call LLM again with results.
 
 Hard cap: MAX_LLM_CALLS_PER_QUESTION (default 3).
-Degraded mode: when LLM is unavailable or disabled, keyword-routes to tools.
+Degraded mode: when LLM is unavailable or disabled, routes queries deterministically.
+Handles unsupported questions with immediate clear data limitation explanations.
 """
 
 from __future__ import annotations
@@ -55,6 +56,50 @@ class AgentResult:
 
 
 # ---------------------------------------------------------------------------
+# Unsupported domains guardrail
+# ---------------------------------------------------------------------------
+
+_UNSUPPORTED_DOMAINS: list[tuple[list[str], str]] = [
+    (
+        [
+            "employee", "attrition", "headcount", "hr data", "salary", "salaries",
+            "hiring", "turnover", "staff satisfaction", "employee satisfaction", "employee morale"
+        ],
+        "I can't answer that reliably from the connected Monday.com Deals and Work Orders boards because they don't contain employee or HR data.",
+    ),
+    (
+        [
+            "profit margin", "ebitda", "net income", "cost data", "cogs", "expenses",
+            "expense", "burn rate", "gross margin", "net profit", "operating margin"
+        ],
+        "I can't calculate profit margin reliably because the connected boards do not contain the required cost/profit data.",
+    ),
+    (
+        [
+            "customer satisfaction", "csat", "nps", "client satisfaction", "customer feedback score"
+        ],
+        "I can't determine customer satisfaction from the connected boards because no customer satisfaction metric is available.",
+    ),
+    (
+        [
+            "marketing campaign", "website traffic", "cac", "google ads", "ad spend",
+            "social media reach", "seo traffic"
+        ],
+        "I can't answer that reliably from the connected boards because they don't contain marketing or website analytics.",
+    ),
+]
+
+
+def check_unsupported_question(question: str) -> str | None:
+    """Return an explanation if the user is asking about an unsupported domain."""
+    q = question.casefold()
+    for triggers, message in _UNSUPPORTED_DOMAINS:
+        if any(tr in q for tr in triggers):
+            return message
+    return None
+
+
+# ---------------------------------------------------------------------------
 # Tool execution (the agent loop calls these, never the LLM directly)
 # ---------------------------------------------------------------------------
 
@@ -104,11 +149,32 @@ class ToolExecutor:
             return analytics.work_order_summary(
                 self.wo_df, self.today,
                 period_spec=period, sector=sector,
+                owner=args.get("owner"),
                 gst_basis=gst, fy_start_month=self.fy_start,
             )
         if name == "sector_overview":
+            sectors = args.get("sectors")
+            if not sectors and sector:
+                sectors = sector if isinstance(sector, list) else [sector]
             return analytics.sector_overview(
-                self.deals_df, self.wo_df, self.today, gst_basis=gst
+                self.deals_df, self.wo_df, self.today,
+                gst_basis=gst, sectors=sectors,
+            )
+        if name == "owner_summary":
+            return analytics.owner_summary(
+                self.deals_df, self.wo_df, self.today,
+                owner=args.get("owner"),
+                period_spec=period,
+                gst_basis=gst,
+                fy_start_month=self.fy_start,
+            )
+        if name == "trend_analysis":
+            return analytics.trend_analysis(
+                self.deals_df, self.wo_df, self.today,
+                metric=args.get("metric", "all"),
+                period_spec=args.get("period_spec", "this_quarter"),
+                compare_to=args.get("compare_to", "last_quarter"),
+                fy_start_month=self.fy_start,
             )
         if name == "data_quality_report":
             return analytics.data_quality_report(
@@ -125,17 +191,100 @@ class ToolExecutor:
 
 
 # ---------------------------------------------------------------------------
-# Degraded-mode keyword router
+# Degraded-mode deterministic router
 # ---------------------------------------------------------------------------
 
 _KEYWORD_ROUTES: list[tuple[list[str], str, dict]] = [
-    (["pipeline and operational", "pipeline and work order", "pipeline and operation", "pipeline and billing", "cross board", "cross-board", "deals and work orders"], "sector_overview", {}),
-    (["highest win rate", "best win rate", "win rate", "win-rate", "winrate", "won", "dead", "lost", "close rate"], "sector_overview", {}),
-    (["pipeline", "open deal", "opportunity", "opportunities", "largest pipeline", "biggest pipeline", "deal value", "overdue", "stale close", "average deal"], "pipeline_summary", {}),
-    (["billed", "collected", "receivable", "billing", "invoice", "work order", "to bill", "to-bill", "over-billed", "overbilled", "operational issue", "operations"], "work_order_summary", {}),
-    (["sector", "sector overview", "compare sectors"], "sector_overview", {}),
-    (["leadership", "update", "brief", "summary report", "biggest risks", "risk", "opportunities"], "leadership_brief", {}),
-    (["data quality", "quality", "reliability", "missing", "anomal", "excluded", "exclusion"], "data_quality_report", {}),
+    # 1. Owner questions
+    (
+        [
+            "who owns", "which owner", "by owner", "owners by pipeline", "largest pipeline by owner",
+            "top 5 owners", "top owners", "most valuable open deals", "most open deals",
+            "most overdue opportunities", "overdue deals by owner", "largest book of opportunities",
+            "sales owner", "sales rep", "rep with the largest"
+        ],
+        "owner_summary",
+        {},
+    ),
+    # 2. Trend & period comparison questions
+    (
+        [
+            "what changed", "changed recently", "changed this quarter", "recent changes",
+            "growth", "trend", "increased", "decreased", "this quarter compared",
+            "compared to last quarter", "how has our pipeline grown", "change in business"
+        ],
+        "trend_analysis",
+        {},
+    ),
+    # 3. Specific sector comparison (Mining vs Renewables, etc.)
+    (
+        [
+            "compare mining and renewables", "mining and renewables", "renewables and mining",
+            "compare renewables and mining"
+        ],
+        "sector_overview",
+        {"sectors": ["Mining", "Renewables"]},
+    ),
+    # 4. Cross-board & Sector overview
+    (
+        [
+            "cross board", "cross-board", "pipeline and operational", "pipeline and work order",
+            "pipeline and operation", "pipeline and billing", "deals and work orders",
+            "overlap with execution", "which sectors have both", "highest win rate",
+            "best win rate", "win rate", "win-rate", "winrate", "convert best",
+            "conversion rate", "won deals", "dead deals", "sector overview", "which industries",
+            "sectoral performance", "investigate based on both boards", "compare sectors"
+        ],
+        "sector_overview",
+        {},
+    ),
+    # 5. Work order, Receivables, Collections, Operations
+    (
+        [
+            "receivable", "outstanding", "money is still due", "still due", "remains to be collected",
+            "money stuck", "money getting stuck", "where is our money", "billed versus collected",
+            "billed vs collected", "billed against collected", "how much have we billed",
+            "how much have we collected", "how much is still to be billed", "still to bill", "to-bill",
+            "how are our work orders doing", "how is execution going", "what's happening operationally",
+            "what's happening with our operations", "happening with our operations", "happening with operations",
+            "operational overview", "operational snapshot", "operations doing", "how are operations", "operations",
+            "billing problems", "billing gap", "delayed orders", "overdue work orders", "work order",
+            "work orders", "invoice", "invoiced", "billed", "collected"
+        ],
+        "work_order_summary",
+        {},
+    ),
+    # 6. Data quality & trust
+    (
+        [
+            "data quality", "can i trust", "trust this dataset", "trust the current data",
+            "what data is missing", "duplicates", "anomal", "fields are incomplete", "data reliability",
+            "excluded", "exclusions"
+        ],
+        "data_quality_report",
+        {},
+    ),
+    # 7. Leadership brief
+    (
+        [
+            "leadership", "executive snapshot", "executive update", "brief", "summary report",
+            "biggest risks", "what should leadership know", "prepare a leadership update",
+            "update for leadership", "where should leadership pay attention"
+        ],
+        "leadership_brief",
+        {},
+    ),
+    # 8. Deals & Pipeline
+    (
+        [
+            "pipeline", "open deal", "open deals", "potential revenue", "business is still open",
+            "opportunity", "opportunities", "largest pipeline", "biggest pipeline", "deal value",
+            "overdue", "stale close", "average deal", "median deal", "pipeline concentration",
+            "concentrated is our pipeline", "how are sales doing"
+        ],
+        "pipeline_summary",
+        {},
+    ),
 ]
 
 
@@ -144,14 +293,17 @@ def _keyword_route(question: str) -> tuple[str, dict] | None:
     q = question.casefold()
     for keywords, tool, default_args in _KEYWORD_ROUTES:
         if any(kw in q for kw in keywords):
-            # Try to detect sector phrase
-            for phrase, _ in {
-                "energy": None, "solar": None, "wind": None, "renewable": None,
-                "mining": None, "rail": None, "railway": None, "power": None,
-                "construction": None, "aviation": None,
-            }.items():
+            # Check for sector phrase in question
+            for phrase in [
+                "clean energy", "green energy", "solar energy", "wind energy",
+                "energy", "solar", "wind", "renewable", "renewables",
+                "mining", "railways", "railway", "rail", "train", "powerline", "power",
+                "construction", "infra", "manufacturing", "aviation", "security", "others",
+            ]:
                 if phrase in q:
-                    default_args = {**default_args, "sector": phrase}
+                    # Do not overwrite specific sector comparison filters
+                    if "sectors" not in default_args:
+                        default_args = {**default_args, "sector": phrase}
                     break
             return tool, default_args
     return None
@@ -160,8 +312,7 @@ def _keyword_route(question: str) -> tuple[str, dict] | None:
 def _render_degraded(tool_name: str, result: dict[str, Any], prefix: str | None = None) -> str:
     """Render a deterministic answer from a ToolResult in degraded mode."""
     p = (prefix or "AI narration unavailable, showing computed results.").rstrip() + "\n\n"
-    display = result.get("display", {})
-    summary = display.get("summary", "")
+    summary = result.get("summary") or result.get("display", {}).get("summary", "")
     lines = [p + summary]
     if result.get("no_data_in_period"):
         avail = result.get("available_range", "unknown")
@@ -171,7 +322,7 @@ def _render_degraded(tool_name: str, result: dict[str, Any], prefix: str | None 
         lines.append("\n**Data notes:**")
         for c in caveats[:3]:
             lines.append(f"- {c}")
-    assumptions = result.get("assumptions_used", [])
+    assumptions = result.get("assumptions") or result.get("assumptions_used", [])
     if assumptions:
         lines.append("\n**Assumptions:**")
         for a in assumptions[:3]:
@@ -205,6 +356,17 @@ def run_agent(
     llm_calls = 0
     model_used: str | None = None
 
+    # Check for unsupported questions (HR, profit margins, customer satisfaction, marketing)
+    unsupported_msg = check_unsupported_question(question)
+    if unsupported_msg:
+        return AgentResult(
+            answer=unsupported_msg,
+            trace=[],
+            llm_calls=0,
+            model_used=None,
+            degraded=False,
+        )
+
     # Build message history (last 8 messages, text only)
     history_msgs: list[LLMMessage] = []
     for m in history[-8:]:
@@ -221,7 +383,6 @@ def run_agent(
 
     # --- LLM loop ---
     messages = list(history_msgs)
-    collected_tool_results: list[str] = []
 
     for call_num in range(max_llm_calls):
         if llm_calls >= max_llm_calls:
@@ -284,19 +445,20 @@ def run_agent(
             trace.append(TraceItem(
                 tool=tc.name,
                 params=tc.args,
-                result_summary=result.get("display", {}).get("summary", "")[:200],
+                result_summary=(result.get("summary") or result.get("display", {}).get("summary", ""))[:200],
                 coverage=result.get("coverage", []),
                 caveats=result.get("caveats", []),
-                assumptions=result.get("assumptions_used", []),
+                assumptions=result.get("assumptions") or result.get("assumptions_used", []),
             ))
             # Serialize result for LLM context (display + structured data)
             data_str = json.dumps(result.get("data", {}), default=str)
+            summary_part = result.get("summary") or result.get("display", {}).get("summary", "")
             tool_result_parts.append(
                 f"Tool: {tc.name}\n"
-                f"Summary:\n{result.get('display', {}).get('summary', '')}\n\n"
+                f"Summary:\n{summary_part}\n\n"
                 f"Structured Data (JSON):\n{data_str}\n\n"
                 f"Caveats: {'; '.join(result.get('caveats', []))}\n"
-                f"Assumptions: {'; '.join(result.get('assumptions_used', []))}\n"
+                f"Assumptions: {'; '.join(result.get('assumptions', []) or result.get('assumptions_used', []))}\n"
                 f"Data as of: {result.get('data_as_of', 'unknown')}\n"
                 f"No data: {result.get('no_data_in_period', False)}\n"
                 f"Available range: {result.get('available_range', '')}\n"
@@ -327,6 +489,10 @@ def _degraded_answer(
     prefix: str | None = None,
 ) -> AgentResult:
     """Keyword-route and render a degraded (no-LLM) answer."""
+    unsupported = check_unsupported_question(question)
+    if unsupported:
+        return AgentResult(answer=unsupported, trace=[], llm_calls=0, model_used=None, degraded=True)
+
     route = _keyword_route(question)
     if route is None:
         lead = (prefix or "AI narration unavailable, showing computed results.").rstrip()
@@ -335,7 +501,8 @@ def _degraded_answer(
             "Could you clarify what you'd like to analyze? For example, you can ask about:\n"
             "- Open pipeline (count, value, sector, owner)\n"
             "- Work orders (billed, collected, receivable)\n"
-            "- Sector overview\n"
+            "- Sales owner performance & rankings\n"
+            "- Sector overview & comparisons\n"
             "- Leadership brief\n"
             "- Data quality"
         )
@@ -346,10 +513,10 @@ def _degraded_answer(
     trace.append(TraceItem(
         tool=tool_name,
         params=args,
-        result_summary=result.get("display", {}).get("summary", "")[:200],
+        result_summary=(result.get("summary") or result.get("display", {}).get("summary", ""))[:200],
         coverage=result.get("coverage", []),
         caveats=result.get("caveats", []),
-        assumptions=result.get("assumptions_used", []),
+        assumptions=result.get("assumptions") or result.get("assumptions_used", []),
     ))
     answer = _render_degraded(tool_name, result, prefix=prefix)
     return AgentResult(answer=answer, trace=trace, llm_calls=0, model_used=None, degraded=True)

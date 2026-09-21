@@ -349,9 +349,9 @@ def data_status() -> dict:
     if _deals_df is not None and "status" in _deals_df.columns:
         open_mask = _deals_df["status"] == "Open"
         open_deals_count = int(open_mask.sum())
-        if "deal_value" in _deals_df.columns:
+        if "value_inr" in _deals_df.columns:
             from app.normalize.common import fmt_inr
-            open_pipeline_val = fmt_inr(float(_deals_df.loc[open_mask, "deal_value"].dropna().sum()))
+            open_pipeline_val = fmt_inr(float(_deals_df.loc[open_mask, "value_inr"].dropna().sum()))
 
     return {
         "deals_rows": len(_deals_df) if _deals_df is not None else 0,
