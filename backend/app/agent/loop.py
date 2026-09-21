@@ -248,6 +248,8 @@ _KEYWORD_ROUTES: list[tuple[list[str], str, dict]] = [
             "how are our work orders doing", "how is execution going", "what's happening operationally",
             "what's happening with our operations", "happening with our operations", "happening with operations",
             "operational overview", "operational snapshot", "operations doing", "how are operations", "operations",
+            "operational delivery", "delivery problems", "delivery problem", "delivery issues", "delivery issue",
+            "operational problems", "operational issues", "operational risk", "execution problems", "execution issues",
             "billing problems", "billing gap", "delayed orders", "overdue work orders", "work order",
             "work orders", "invoice", "invoiced", "billed", "collected"
         ],
@@ -289,23 +291,71 @@ _KEYWORD_ROUTES: list[tuple[list[str], str, dict]] = [
 
 
 def _keyword_route(question: str) -> tuple[str, dict] | None:
-    """Return (tool_name, default_args) for a question if a keyword matches."""
+    """Return (tool_name, default_args) for a question by analyzing business intent."""
     q = question.casefold()
+
+    # Detect sector phrase in question
+    extracted_sector = None
+    for phrase in [
+        "clean energy", "green energy", "solar energy", "wind energy",
+        "energy", "solar", "wind", "renewable", "renewables",
+        "mining", "railways", "railway", "rail", "train", "powerline", "power",
+        "construction", "infra", "manufacturing", "aviation", "security", "others",
+    ]:
+        if phrase in q:
+            extracted_sector = phrase
+            break
+
+    # 1. Specific two-sector direct comparison (e.g. "compare mining and renewables")
+    if ("mining" in q and "renewable" in q) or ("renewables" in q and "mining" in q):
+        return "sector_overview", {"sectors": ["Mining", "Renewables"]}
+
+    # 2. Semantic Cross-Board & Sector Risk Intent:
+    # A question has cross-board intent if it bridges:
+    # (A) Sales/Deals/Pipeline signal AND (B) Operations/Delivery/Execution signal,
+    # OR explicitly mentions cross-board / both boards / sales & operations overlap.
+    sales_pipeline_signals = [
+        "pipeline", "sales", "deal", "deals", "opportunity", "opportunities",
+        "open business", "commercial exposure", "potential revenue", "pipeline concentration",
+    ]
+    ops_delivery_signals = [
+        "operational", "operation", "operations", "delivery", "execution",
+        "work order", "work orders", "delivery risk", "delivery problem", "delivery problems",
+        "delivery issue", "delivery issues", "billing", "receivable", "receivables",
+        "fulfillment", "slippage", "execution risk", "execution risks",
+    ]
+    cross_board_terms = [
+        "cross board", "cross-board", "both boards", "two boards",
+        "sales and execution", "sales and operations", "pipeline and delivery",
+        "pipeline and operational", "pipeline and execution", "pipeline and work order",
+        "deals and work orders", "deals and operations", "sales and delivery",
+        "sales exposure and execution", "sales and execution risks",
+    ]
+    intersection_signals = [
+        "both", "overlap", "overlapping", "together", "joint", "combined",
+        "intersect", "simultaneous", "at the same time", "consider sales and operations",
+        "sales and operations together",
+    ]
+
+    has_sales_signal = any(s in q for s in sales_pipeline_signals)
+    has_ops_signal = any(s in q for s in ops_delivery_signals)
+    has_cross_board_phrase = any(cb in q for cb in cross_board_terms)
+    has_intersection = any(it in q for it in intersection_signals)
+
+    # Route to sector_overview if question combines sales + operations OR asks for cross-board intersection
+    if has_cross_board_phrase or (has_sales_signal and has_ops_signal) or (has_intersection and (has_sales_signal or has_ops_signal)):
+        args: dict[str, Any] = {}
+        if extracted_sector:
+            args["sector"] = extracted_sector
+        return "sector_overview", args
+
+    # 3. Fall back to category-based intent routes
     for keywords, tool, default_args in _KEYWORD_ROUTES:
         if any(kw in q for kw in keywords):
-            # Check for sector phrase in question
-            for phrase in [
-                "clean energy", "green energy", "solar energy", "wind energy",
-                "energy", "solar", "wind", "renewable", "renewables",
-                "mining", "railways", "railway", "rail", "train", "powerline", "power",
-                "construction", "infra", "manufacturing", "aviation", "security", "others",
-            ]:
-                if phrase in q:
-                    # Do not overwrite specific sector comparison filters
-                    if "sectors" not in default_args:
-                        default_args = {**default_args, "sector": phrase}
-                    break
+            if extracted_sector and "sectors" not in default_args:
+                default_args = {**default_args, "sector": extracted_sector}
             return tool, default_args
+
     return None
 
 

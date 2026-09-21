@@ -274,6 +274,33 @@ def test_cross_board_disclaimer_and_sector_comparison():
     assert sectors == {"Mining", "Renewables"}
 
 
+def test_cross_board_dual_risk_identification():
+    """Sector overview must identify sectors combining large pipeline (>=2 Cr) and operational risk."""
+    deals_df = _build_test_deals_df()
+    wo_df = _build_test_wo_df()
+    res = sector_overview(deals_df, wo_df, today=date(2026, 9, 21))
+
+    data = res["data"]
+    investigate = data["cross_board_investigate_sectors"]
+    inv_sectors = {c["sector"] for c in investigate}
+
+    # Renewables (70M open, delayed order WO-03) and Mining (30M open, billing anomalies) must be flagged
+    assert "Renewables" in inv_sectors
+    assert "Mining" in inv_sectors
+
+    # Construction has 5M open (< 20M threshold) and 0 work orders -> must NOT be in dual risk
+    assert "Construction" not in inv_sectors
+
+    # Check that observable risk signals and criteria are disclosed
+    r_item = next(c for c in investigate if c["sector"] == "Renewables")
+    assert r_item["delayed_orders_count"] >= 1
+    assert any("delayed" in sig.lower() for sig in r_item["risk_signals"])
+
+    # Assumptions must explain criteria transparently
+    assert any("large sales pipeline criterion" in a.lower() for a in res["assumptions"])
+    assert any("operational delivery risk criteria" in a.lower() for a in res["assumptions"])
+
+
 # ---------------------------------------------------------------------------
 # 5. UNSUPPORTED QUESTIONS TESTS
 # ---------------------------------------------------------------------------
@@ -327,6 +354,7 @@ def test_trend_recent_unavailable_history():
     ("How are our work orders doing?", "work_order_summary"),
     ("Give me an operational overview.", "work_order_summary"),
     ("What's happening with our operations?", "work_order_summary"),
+    ("Which sectors have operational delivery problems?", "work_order_summary"),
     ("Who owns the most valuable open deals?", "owner_summary"),
     ("Which owner has the largest open pipeline?", "owner_summary"),
     ("Show me the top 5 owners by pipeline.", "owner_summary"),
@@ -335,12 +363,23 @@ def test_trend_recent_unavailable_history():
     ("Which sector has the highest win rate?", "sector_overview"),
     ("Compare Mining and Renewables.", "sector_overview"),
     ("Which sectors have both pipeline and operational issues?", "sector_overview"),
+    ("Which sectors have both a large sales pipeline and operational delivery risk?", "sector_overview"),
+    ("Where are sales exposure and execution risk overlapping?", "sector_overview"),
+    ("Which sectors have big opportunities but delivery problems?", "sector_overview"),
+    ("Where are our biggest sales and execution risks?", "sector_overview"),
+    ("Which sectors are exposed on both the sales and operations side?", "sector_overview"),
+    ("Where do pipeline concentration and operational problems overlap?", "sector_overview"),
+    ("Which sectors should leadership worry about from both sales and operations?", "sector_overview"),
+    ("Which sectors have both a large pipeline and delivery risk?", "sector_overview"),
     ("What changed recently in our business?", "trend_analysis"),
     ("What changed this quarter?", "trend_analysis"),
     ("Can I trust the current data?", "data_quality_report"),
     ("Give me an executive snapshot.", "leadership_brief"),
     ("How much of our pipeline is overdue?", "pipeline_summary"),
     ("Where is most of our potential revenue?", "pipeline_summary"),
+    ("Which sectors have the largest pipeline?", "pipeline_summary"),
+    ("Show active pipeline by sector.", "pipeline_summary"),
+    ("Show me active pipeline by sector.", "pipeline_summary"),
 ])
 def test_query_routing_comprehensiveness(question, expected_tool):
     """Deterministic routing must correctly route all key founder queries."""
@@ -390,3 +429,57 @@ def test_agent_call_limits_preserved():
         max_llm_calls=2,
     )
     assert res.llm_calls <= 2
+
+
+def test_agent_degraded_mode_cross_board_dual_risk():
+    """Failing cross-board question in degraded mode directly provides dual-risk sectors and criteria."""
+    executor = _build_test_executor()
+    res = run_agent(
+        question="Which sectors have both a large sales pipeline and operational delivery risk?",
+        history=[],
+        executor=executor,
+        llm=None,
+        today=date(2026, 9, 21),
+        data_as_of="2026-04-01",
+        llm_disabled=True,
+    )
+    assert res.degraded is True
+    assert len(res.trace) == 1
+    assert res.trace[0].tool == "sector_overview"
+    assert "Sectors with BOTH a large sales pipeline and operational delivery risk:" in res.answer
+    assert "Renewables" in res.answer
+    assert "Mining" in res.answer
+    assert "Criteria: large pipeline defined as open value ≥ ₹2.0 Cr" in res.answer
+
+
+def test_compute_directly_header_forces_deterministic():
+    """X-Compute-Directly header forces deterministic computation without invoking LLM."""
+    from fastapi.testclient import TestClient
+    from app.main import app
+    from unittest.mock import patch
+
+    client = TestClient(app, raise_server_exceptions=False)
+    deals_df = _build_test_deals_df()
+    wo_df = _build_test_wo_df()
+    dr = QualityReport(board="deals", rows_in=len(deals_df), rows_used=len(deals_df))
+    wr = WOQualityReport(rows_in=len(wo_df), rows_used=len(wo_df))
+
+    with patch("app.main._load_data", return_value=None), \
+         patch("app.main._deals_df", deals_df), \
+         patch("app.main._wo_df", wo_df), \
+         patch("app.main._deals_report", dr), \
+         patch("app.main._wo_report", wr):
+
+        res = client.post(
+            "/api/chat",
+            json={"messages": [{"role": "user", "content": "Which sectors have both a large sales pipeline and operational delivery risk?"}]},
+            headers={"x-compute-directly": "true"},
+        )
+        assert res.status_code == 200
+        data = res.json()
+        assert data["computed_directly"] is True
+        assert data["degraded"] is True
+        assert data["llm_calls"] == 0
+        assert "Renewables" in data["answer"]
+        assert "Mining" in data["answer"]
+        assert "⚡ Computed directly from live Monday.com data." in data["answer"]

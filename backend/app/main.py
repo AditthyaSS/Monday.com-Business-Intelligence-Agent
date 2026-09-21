@@ -224,6 +224,7 @@ class ChatMessage(BaseModel):
 
 class ChatRequest(BaseModel):
     messages: list[ChatMessage] = Field(min_length=1, max_length=12)
+    compute_directly: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -438,8 +439,15 @@ def chat(request: Request, body: ChatRequest) -> Any:
 
     history = messages[:-1]
 
+    force_compute_directly = (
+        body.compute_directly
+        or request.headers.get("x-compute-directly", "").lower() in ("true", "1", "yes")
+    )
+
     # Answer cache
-    cache_key = hashlib.md5(json.dumps({"q": question, "dao": _data_as_of()}).encode()).hexdigest()
+    cache_key = hashlib.md5(
+        json.dumps({"q": question, "dao": _data_as_of(), "direct": force_compute_directly}).encode()
+    ).hexdigest()
     if cache_key in _answer_cache:
         cached_answer, cached_at = _answer_cache[cache_key]
         if time.monotonic() - cached_at < settings.answer_cache_ttl_seconds:
@@ -450,11 +458,14 @@ def chat(request: Request, body: ChatRequest) -> Any:
     custom_gemini_key = (request.headers.get("x-custom-gemini-key") or "").strip()
     has_byok = bool(custom_gemini_key)
     budget_ok = _budget_ok() or has_byok
-    use_degraded = _llm_disabled() or not budget_ok
+    use_degraded = _llm_disabled() or not budget_ok or force_compute_directly
     llm: GeminiProvider | None = None
     fallback_prefix: str | None = None
 
-    if _llm_disabled():
+    if force_compute_directly:
+        use_degraded = True
+        fallback_prefix = "⚡ Computed directly from live Monday.com data."
+    elif _llm_disabled():
         use_degraded = True
     elif not budget_ok:
         use_degraded = True
@@ -534,6 +545,7 @@ def chat(request: Request, body: ChatRequest) -> Any:
         "llm_calls": result.llm_calls,
         "model_used": result.model_used,
         "degraded": result.degraded,
+        "computed_directly": force_compute_directly or result.degraded,
         "byok_active": has_byok,
         "llm_calls_today": _llm_calls_today,
         "llm_daily_budget": settings.global_llm_calls_per_day,

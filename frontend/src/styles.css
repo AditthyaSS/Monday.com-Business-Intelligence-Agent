@@ -463,10 +463,18 @@ html, body, #root {
 
 .claude-greeting-heading {
   display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin-bottom: 22px;
+}
+
+.greeting-title-row {
+  display: flex;
   align-items: center;
   justify-content: center;
   gap: 12px;
-  margin-bottom: 24px;
 }
 
 .hero-starburst {
@@ -480,10 +488,20 @@ html, body, #root {
 
 .greeting-text {
   font-family: var(--font-surfer);
-  font-size: 2.3rem;
+  font-size: 2.2rem;
   font-weight: 400;
   color: var(--claude-text);
   letter-spacing: 0.01em;
+}
+
+.hero-subtitle {
+  font-size: 0.95rem;
+  color: var(--claude-text-secondary);
+  margin-top: 2px;
+  margin-bottom: 8px;
+  max-width: 520px;
+  line-height: 1.45;
+  font-weight: 400;
 }
 
 /* Centered Claude Input Capsule */
@@ -627,7 +645,118 @@ html, body, #root {
   background: var(--claude-terracotta-hover);
 }
 
-/* Claude Prompt Suggestion Pills Row */
+/* ==========================================================================
+   Compact Discovery Section (Hero)
+   ========================================================================== */
+.discovery-section {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+  margin-top: 22px;
+  max-width: 680px;
+  width: 100%;
+}
+
+.discovery-header {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  padding: 0 4px;
+}
+
+.discovery-label {
+  font-size: 0.78rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--claude-text-tertiary);
+}
+
+.discovery-pills-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+}
+
+.discovery-pill {
+  background: #FFFFFF;
+  border: 1px solid var(--claude-border);
+  border-radius: 999px;
+  padding: 8px 16px;
+  font-size: 0.83rem;
+  font-weight: 500;
+  color: var(--claude-text);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  text-align: left;
+  box-shadow: var(--claude-shadow-sm);
+  transition: all 0.15s ease;
+  line-height: 1.35;
+}
+
+.discovery-pill:hover {
+  background: var(--claude-surface-subtle);
+  border-color: var(--claude-border-strong);
+  transform: translateY(-1px);
+  box-shadow: var(--claude-shadow-md);
+}
+
+.discovery-pill:focus-visible {
+  outline: 2px solid var(--claude-terracotta);
+  outline-offset: 2px;
+}
+
+.discovery-pill-text {
+  color: var(--claude-text);
+}
+
+.discovery-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 2px 4px 0;
+}
+
+.btn-explore-insights {
+  background: transparent;
+  border: none;
+  color: var(--claude-terracotta);
+  font-size: 0.84rem;
+  font-weight: 600;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 6px;
+  border-radius: 4px;
+  transition: all 0.15s ease;
+}
+
+.btn-explore-insights:hover {
+  color: var(--claude-terracotta-hover);
+}
+
+.btn-explore-insights:hover .arrow {
+  transform: translateX(3px);
+}
+
+.btn-explore-insights .arrow {
+  font-size: 0.92rem;
+  transition: transform 0.15s ease;
+  display: inline-block;
+}
+
+.btn-explore-insights:focus-visible {
+  outline: 2px solid var(--claude-terracotta);
+  outline-offset: 2px;
+}
+
+/* Claude Prompt Suggestion Pills Row (Fallback) */
 .claude-chips-row {
   display: flex;
   flex-wrap: wrap;
@@ -1111,6 +1240,14 @@ html, body, #root {
     width: 100%;
     justify-content: center;
   }
+  .discovery-pills-row {
+    flex-direction: column;
+    width: 100%;
+  }
+  .discovery-pill {
+    width: 100%;
+    justify-content: flex-start;
+  }
   .claude-error-layout {
     flex-direction: column;
     text-align: center;
@@ -1404,6 +1541,11 @@ html, body, #root {
 
 .modal-panel.guide-panel {
   max-width: 660px;
+}
+
+.modal-panel.explore-insights-modal-panel {
+  max-width: 780px;
+  width: 95vw;
 }
 
 @keyframes modalPanelUp {
@@ -2121,6 +2263,158 @@ html, body, #root {
 .footer-bullet {
   color: var(--claude-border-strong);
 }
+
+/* ==========================================================================
+   Explore Insights Discovery Modal
+   ========================================================================== */
+.explore-insights-subtitle {
+  font-size: 0.82rem;
+  color: var(--claude-text-secondary);
+  margin-top: 3px;
+  font-weight: 400;
+  line-height: 1.4;
+}
+
+.explore-insights-body {
+  padding: 16px 20px;
+  overflow-y: auto;
+  max-height: calc(85vh - 130px);
+}
+
+.explore-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 14px;
+}
+
+@media (max-width: 680px) {
+  .explore-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.explore-category-card {
+  background: var(--claude-surface-subtle);
+  border: 1px solid var(--claude-border-subtle);
+  border-radius: 12px;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  transition: all 0.15s ease;
+}
+
+.explore-category-card:hover {
+  border-color: var(--claude-border);
+  background: var(--claude-surface);
+  box-shadow: var(--claude-shadow-sm);
+}
+
+.explore-category-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--claude-border-subtle);
+}
+
+.explore-category-icon {
+  font-size: 1.25rem;
+  line-height: 1;
+  margin-top: 1px;
+}
+
+.explore-category-title {
+  font-size: 0.92rem;
+  font-weight: 600;
+  color: var(--claude-text);
+  margin: 0;
+}
+
+.explore-category-desc {
+  font-size: 0.74rem;
+  color: var(--claude-text-tertiary);
+  display: block;
+  margin-top: 2px;
+}
+
+.explore-items-list {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.explore-item-btn {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  text-align: left;
+  background: var(--claude-surface);
+  border: 1px solid var(--claude-border-subtle);
+  border-radius: 8px;
+  padding: 7px 11px;
+  font-size: 0.82rem;
+  font-weight: 500;
+  color: var(--claude-text);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  width: 100%;
+}
+
+.explore-item-btn:hover {
+  background: var(--claude-terracotta-bg);
+  border-color: var(--claude-terracotta-border);
+  color: var(--claude-terracotta);
+  transform: translateX(2px);
+}
+
+.explore-item-btn:focus-visible {
+  outline: 2px solid var(--claude-terracotta);
+  outline-offset: 1px;
+}
+
+.explore-item-bullet {
+  color: var(--claude-terracotta);
+  margin-right: 7px;
+  font-weight: 700;
+  font-size: 0.9rem;
+  flex-shrink: 0;
+}
+
+.explore-item-label {
+  flex: 1;
+  line-height: 1.35;
+  color: inherit;
+}
+
+.explore-item-arrow {
+  font-size: 0.85rem;
+  color: var(--claude-text-muted);
+  transition: transform 0.15s ease, color 0.15s ease;
+  flex-shrink: 0;
+  margin-left: 6px;
+}
+
+.explore-item-btn:hover .explore-item-arrow {
+  color: var(--claude-terracotta);
+  transform: translateX(3px);
+}
+
+.explore-insights-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 20px;
+  background: var(--claude-surface-subtle);
+  border-top: 1px solid var(--claude-border-subtle);
+}
+
+.explore-footer-note {
+  font-size: 0.77rem;
+  color: var(--claude-text-secondary);
+  line-height: 1.4;
+}
+
 
 
 

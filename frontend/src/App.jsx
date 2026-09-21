@@ -7,6 +7,7 @@ import { SettingsModal } from './components/SettingsModal.jsx'
 import { OnboardingGuideModal } from './components/OnboardingGuideModal.jsx'
 import { PersonaSelectionModal } from './components/PersonaSelectionModal.jsx'
 import { getPersona, PersonaAvatar } from './components/ExecutivePersonas.jsx'
+import { ExploreInsightsModal } from './components/ExploreInsightsModal.jsx'
 import {
   SkylarkDroneLogo,
   SkylarkChatbotIcon,
@@ -31,38 +32,23 @@ const MAX_CHARS = 1000
 const MAX_HISTORY = 8
 const ABORT_MS = 90000
 
-// Domain prompt chips for Skylark Drones BI
-const DOMAIN_PROMPTS = [
-  {
-    icon: <PipelineIcon size={15} />,
-    label: 'Open Pipeline',
-    tag: 'Pipeline',
-    query: "How's our open pipeline looking overall?",
-  },
-  {
-    icon: <EnergyIcon size={15} />,
-    label: 'Energy Sector Q3/Q4',
-    tag: 'Energy',
-    query: "How's our pipeline looking for the energy sector this quarter?",
-  },
-  {
-    icon: <WinRateIcon size={15} />,
-    label: 'Win Rate by Sector',
-    tag: 'Win Rates',
-    query: "What's our win rate by sector?",
-  },
-  {
-    icon: <RevenueIcon size={15} />,
-    label: 'Mining Billed vs Collected',
-    tag: 'Collections',
-    query: "How much have we billed versus collected on mining work orders?",
-  },
-  {
-    icon: <BriefingIcon size={15} />,
-    label: 'Executive Leadership Brief',
-    tag: 'Briefing',
-    query: "Prepare a leadership update",
-  },
+// Internal rotation pools for the 3 visible sample questions (compact discovery)
+const DISCOVERY_ROTATION_POOLS = [
+  [
+    'Which deals should leadership worry about right now?',
+    'How much is currently tied up in receivables?',
+    'Which sectors have both a large sales pipeline and operational delivery risk?',
+  ],
+  [
+    "How's our open pipeline looking overall?",
+    'Which work orders are delayed past their end date?',
+    'Where are sales exposure and execution risk overlapping?',
+  ],
+  [
+    'Where are our biggest sales and execution risks?',
+    'How much have we billed versus collected?',
+    'Can I trust the current data from Monday.com?',
+  ],
 ]
 
 export default function App() {
@@ -78,7 +64,14 @@ export default function App() {
   const [showStatusStrip, setShowStatusStrip] = useState(false)
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
   const [isGuideOpen, setIsGuideOpen] = useState(false)
+  const [isExploreOpen, setIsExploreOpen] = useState(false)
   const [byokKey, setByokKey] = useState('')
+
+  // 3 carefully selected sample questions rotated per page load
+  const [visibleExamples] = useState(() => {
+    const idx = Math.floor(Math.random() * DISCOVERY_ROTATION_POOLS.length)
+    return DISCOVERY_ROTATION_POOLS[idx]
+  })
 
   // Executive Character Persona state
   const [personaId, setPersonaId] = useState(() => {
@@ -142,8 +135,21 @@ export default function App() {
     }
   }, [input])
 
+  // Discovery insight selection handler (populates input and focuses textarea)
+  const handleSelectInsight = useCallback((query) => {
+    setInput(query)
+    setIsExploreOpen(false)
+    setTimeout(() => {
+      if (textareaRef.current) {
+        textareaRef.current.focus()
+        textareaRef.current.style.height = 'auto'
+        textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 240)}px`
+      }
+    }, 60)
+  }, [])
+
   const sendMessage = useCallback(
-    async (text) => {
+    async (text, options = {}) => {
       const cleanText = text.trim()
       if (!cleanText || loading) return
       setError(null)
@@ -161,6 +167,7 @@ export default function App() {
       const allMessages = [...messages, userMsg].slice(-MAX_HISTORY)
       const payload = {
         messages: allMessages.map((m) => ({ role: m.role, content: m.content })),
+        compute_directly: Boolean(options?.computeDirectly),
       }
 
       const controller = new AbortController()
@@ -179,6 +186,9 @@ export default function App() {
 
       try {
         const headers = { 'Content-Type': 'application/json' }
+        if (options?.computeDirectly) {
+          headers['X-Compute-Directly'] = 'true'
+        }
         const activeKey = localStorage.getItem('skylark_custom_gemini_key') || ''
         if (activeKey.trim()) {
           headers['X-Custom-Gemini-Key'] = activeKey.trim()
@@ -329,6 +339,11 @@ export default function App() {
             <span>Architecture & Guide</span>
           </div>
 
+          <div className="sidebar-nav-item" onClick={() => setIsExploreOpen(true)}>
+            <span className="nav-icon"><GuideIcon size={16} /></span>
+            <span>Explore Insights</span>
+          </div>
+
           <div className="sidebar-nav-item" onClick={() => setIsSettingsOpen(true)}>
             <span className="nav-icon"><GearIcon size={16} /></span>
             <span>Settings & BYOK</span>
@@ -422,6 +437,15 @@ export default function App() {
 
           <div className="claude-top-right">
             <button
+              className="telemetry-pill-btn"
+              onClick={() => setIsExploreOpen(true)}
+              title="Explore all BI insight capabilities"
+            >
+              <GuideIcon size={14} />
+              <span>Explore Insights</span>
+            </button>
+
+            <button
               className="telemetry-pill-btn persona-pill"
               onClick={() => setIsPersonaModalOpen(true)}
               title="Switch Executive Character"
@@ -462,8 +486,13 @@ export default function App() {
             /* Claude-Inspired Skylark Hero View */
             <div className="claude-hero-container">
               <div className="claude-greeting-heading">
-                <SkylarkDroneLogo size={42} className="hero-starburst" />
-                <h1 className="greeting-text">{getGreeting()}</h1>
+                <div className="greeting-title-row">
+                  <SkylarkDroneLogo size={38} className="hero-starburst" />
+                  <h1 className="greeting-text">Ask Skylark Intelligence</h1>
+                </div>
+                <p className="hero-subtitle">
+                  Ask a question about sales, operations, pipeline, or business performance.
+                </p>
                 <div
                   className="persona-hero-badge"
                   onClick={() => setIsPersonaModalOpen(true)}
@@ -472,7 +501,7 @@ export default function App() {
                   <PersonaAvatar id={personaId} size={18} />
                   <span className="persona-badge-role">{activePersona.role}</span>
                   <span className="persona-badge-dot">•</span>
-                  <span className="persona-badge-switch">Switch Character ↻</span>
+                  <span className="persona-badge-switch">{activePersona.name} ↻</span>
                 </div>
               </div>
 
@@ -485,7 +514,7 @@ export default function App() {
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
                   onKeyDown={handleKeyDown}
-                  placeholder="How can I help you analyze Deals & Work Orders today?"
+                  placeholder="Ask a question about sales, operations, pipeline, or business performance..."
                   disabled={loading}
                   maxLength={MAX_CHARS + 50}
                   rows={2}
@@ -522,20 +551,37 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Domain Specific Prompt Chips */}
-              <div className="claude-chips-row">
-                {DOMAIN_PROMPTS.map((p, idx) => (
+              {/* Compact Discovery Section */}
+              <div className="discovery-section">
+                <div className="discovery-header">
+                  <span className="discovery-label">Try asking</span>
+                </div>
+
+                <div className="discovery-pills-row" role="group" aria-label="Sample questions">
+                  {visibleExamples.map((ex, idx) => (
+                    <button
+                      key={idx}
+                      type="button"
+                      className="discovery-pill"
+                      onClick={() => handleSelectInsight(ex)}
+                      title={`Load: "${ex}"`}
+                    >
+                      <span className="discovery-pill-text">{ex}</span>
+                    </button>
+                  ))}
+                </div>
+
+                <div className="discovery-footer">
                   <button
-                    key={idx}
-                    className="claude-prompt-pill"
-                    onClick={() => sendMessage(p.query)}
-                    disabled={loading}
+                    type="button"
+                    className="btn-explore-insights"
+                    onClick={() => setIsExploreOpen(true)}
+                    aria-label="Open Explore Insights discovery menu"
                   >
-                    <span className="pill-icon">{p.icon}</span>
-                    <span className="pill-text">{p.tag}</span>
-                    <span className="pill-query">({p.label})</span>
+                    <span>Explore insights</span>
+                    <span className="arrow" aria-hidden="true">→</span>
                   </button>
-                ))}
+                </div>
               </div>
             </div>
           ) : (
@@ -565,7 +611,7 @@ export default function App() {
                   retryCountdown={retryCountdown}
                   onRunDeterministic={() => {
                     const lastUser = [...messages].reverse().find((m) => m.role === 'user')
-                    if (lastUser) sendMessage(lastUser.content)
+                    if (lastUser) sendMessage(lastUser.content, { computeDirectly: true })
                   }}
                 />
               )}
@@ -666,6 +712,13 @@ export default function App() {
           sessionStorage.setItem('skylark_session_onboarded', 'true')
           sendMessage(prompt)
         }}
+      />
+
+      {/* Explore Insights Discovery Modal */}
+      <ExploreInsightsModal
+        isOpen={isExploreOpen}
+        onClose={() => setIsExploreOpen(false)}
+        onSelectInsight={handleSelectInsight}
       />
     </div>
   )

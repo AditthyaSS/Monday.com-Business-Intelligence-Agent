@@ -36,6 +36,12 @@ If the user asks about domains NOT present in these boards (for example: employe
 - If the user asks "What changed recently?" or "What changed this quarter?", use the `trend_analysis` tool.
 - If the connected data does not provide a comparable prior-period dataset (e.g. data ends Jan/Apr 2026 while current date is {today}), explain clearly that a reliable recent-change comparison is unavailable, and present the current state snapshot clearly labeled as: "Current-state snapshot; a reliable recent-change comparison is unavailable."
 
+## CROSS-BOARD & SECTOR RISK QUESTIONS:
+- When asked about sectors with both a large sales pipeline and operational delivery risk (or overlapping sales and execution exposure), use the `sector_overview` tool.
+- Answer directly in the first sentence by identifying sectors that combine material open pipeline (e.g. Renewables, Mining, Railways) with operational friction (delayed work orders, large unbilled execution backlog, heavy receivables, or billing anomalies).
+- State the transparent criteria used (large pipeline defined as open value >= ₹2.0 Cr; operational delivery risk defined as delayed orders, unbilled backlog, receivables, or anomalies).
+- Differentiate sectors with high pipeline but 0 execution (e.g. Tender, DSP with 0 work orders) to distinguish pre-operational bidding from active delivery risk.
+
 ## Preferred Response Structure:
 1. **Direct Answer:** Exact figure/entity answering the user's specific question.
 2. **Supporting Metrics & Context:** Key breakdowns, rankings, percentages, and business context.
@@ -106,7 +112,7 @@ TOOL_DECLARATIONS: list[dict] = [
     },
     {
         "name": "sector_overview",
-        "description": "Cross-board sector view: win rates by sector, won and dead deal counts, closed deals, open pipeline count and value, work order delivery, billing, and receivables. Also supports comparing specific sectors (e.g. Mining vs Renewables) and identifying sectors with cross-board risks (high pipeline with billing/receivable issues).",
+        "description": "Cross-board sector view combining Deals and Work Orders boards: open pipeline count and value, win rates by sector, work order execution, billing, and receivables. Use for comparing specific sectors (e.g. Mining vs Renewables) AND for cross-board risk analysis (identifying sectors that combine a large sales pipeline with operational delivery risks such as delayed work orders, unbilled execution backlog, heavy receivables, or billing anomalies).",
         "parameters": {
             "type": "object",
             "properties": {

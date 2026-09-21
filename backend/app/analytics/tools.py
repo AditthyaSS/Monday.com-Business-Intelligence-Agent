@@ -707,6 +707,12 @@ def sector_overview(
             wo["_receivable"] = wo["receivable"] if "receivable" in wo.columns else pd.Series([None] * len(wo))
             wo["_collected"] = wo["collected_incl"] if "collected_incl" in wo.columns else pd.Series([None] * len(wo))
 
+        def _is_wo_delayed(row: pd.Series) -> bool:
+            end = row.get("end")
+            status = str(row.get("execution_status", "")).strip().casefold()
+            return bool(end and isinstance(end, date) and end < today and status != "completed")
+
+        wo["_is_delayed"] = wo.apply(_is_wo_delayed, axis=1)
         wo["_has_anomaly"] = wo["quality_flags"].apply(lambda f: ("over_billed" in f) or ("negative_to_bill" in f))
         wo_id_col = "wo_id" if "wo_id" in wo.columns else "sector"
         wo_by_sector = (
@@ -718,15 +724,16 @@ def sector_overview(
                 wo_collected=("_collected", "sum"),
                 wo_receivable=("_receivable", "sum"),
                 wo_anomalies=("_has_anomaly", "sum"),
+                wo_delayed_count=("_is_delayed", "sum"),
             )
             .reset_index()
         )
         wo_by_sector["wo_to_bill"] = wo_by_sector["wo_value"] - wo_by_sector["wo_billed"]
     else:
-        wo_by_sector = pd.DataFrame(columns=["sector", "wo_count", "wo_value", "wo_billed", "wo_collected", "wo_receivable", "wo_to_bill", "wo_anomalies"])
+        wo_by_sector = pd.DataFrame(columns=["sector", "wo_count", "wo_value", "wo_billed", "wo_collected", "wo_receivable", "wo_to_bill", "wo_anomalies", "wo_delayed_count"])
 
     merged = deal_sector.merge(wo_by_sector, on="sector", how="outer")
-    num_cols = ["open_count", "open_value", "won", "dead", "wo_count", "wo_value", "wo_billed", "wo_collected", "wo_receivable", "wo_to_bill", "wo_anomalies"]
+    num_cols = ["open_count", "open_value", "won", "dead", "wo_count", "wo_value", "wo_billed", "wo_collected", "wo_receivable", "wo_to_bill", "wo_anomalies", "wo_delayed_count"]
     for col in num_cols:
         if col in merged.columns:
             merged[col] = pd.to_numeric(merged[col], errors="coerce").fillna(0)
@@ -739,6 +746,11 @@ def sector_overview(
         sec_filter = [s.strip().casefold() for s in (sectors if isinstance(sectors, list) else [sectors])]
         merged = merged[merged["sector"].str.casefold().isin(sec_filter)]
         assumptions.append(f"Filtered for sector comparison: {', '.join(merged['sector'].tolist())}.")
+
+    # Transparent criteria for large sales pipeline and operational delivery risk
+    LARGE_PIPELINE_THRESHOLD = 20_000_000.0  # ₹2.0 Cr
+    assumptions.append("Large sales pipeline criterion: open pipeline value >= ₹2.0 Cr (material share of company pipeline).")
+    assumptions.append("Operational delivery risk criteria: delayed work orders, unbilled execution backlog >= ₹1.5 Cr, receivables >= ₹1.0 Cr, or billing anomalies.")
 
     # Win rate = Won / (Won + Dead) strictly. None when Won + Dead == 0.
     merged["win_rate"] = merged.apply(
@@ -756,39 +768,59 @@ def sector_overview(
         wr = r.get("win_rate")
         wr_pct = float(wr) if wr is not None and not pd.isna(wr) else None
         open_val = float(r.get("open_value", 0))
+        open_cnt = int(r.get("open_count", 0))
+        wo_cnt = int(r.get("wo_count", 0))
         wo_val = float(r.get("wo_value", 0))
         wo_billed = float(r.get("wo_billed", 0))
         wo_rec = float(r.get("wo_receivable", 0))
         wo_to_bill = float(r.get("wo_to_bill", 0))
         anom_cnt = int(r.get("wo_anomalies", 0))
+        delayed_cnt = int(r.get("wo_delayed_count", 0))
 
-        flags = []
-        if open_val > 50_000_000 and wo_rec > 10_000_000:
-            flags.append("High pipeline + high receivables")
-        if open_val > 50_000_000 and wo_to_bill > 20_000_000:
-            flags.append("High pipeline + large unbilled execution gap")
+        risk_signals = []
+        if delayed_cnt > 0:
+            risk_signals.append(f"{delayed_cnt} delayed work order(s)")
+        if wo_to_bill >= 15_000_000.0:
+            risk_signals.append(f"{fmt_inr(wo_to_bill)} unbilled execution backlog")
+        if wo_rec >= 10_000_000.0:
+            risk_signals.append(f"{fmt_inr(wo_rec)} outstanding receivables")
         if anom_cnt > 0:
-            flags.append(f"{anom_cnt} billing anomaly(s)")
+            risk_signals.append(f"{anom_cnt} billing anomaly(s)")
 
-        if flags:
+        has_large_pipeline = open_val >= LARGE_PIPELINE_THRESHOLD
+        has_delivery_risk = bool(risk_signals)
+
+        # Cross-board investigation surfaces sectors with BOTH large sales pipeline AND operational delivery risk
+        if has_large_pipeline and has_delivery_risk:
             cross_board_investigate.append({
                 "sector": r["sector"],
+                "open_value": open_val,
                 "open_value_fmt": fmt_inr(open_val),
+                "open_count": open_cnt,
+                "wo_count": wo_cnt,
+                "wo_value": wo_val,
+                "wo_value_fmt": fmt_inr(wo_val),
+                "delayed_orders_count": delayed_cnt,
+                "wo_receivable": wo_rec,
                 "wo_receivable_fmt": fmt_inr(wo_rec),
+                "wo_to_bill": wo_to_bill,
                 "wo_to_bill_fmt": fmt_inr(wo_to_bill),
-                "issues": flags,
+                "anomalies_count": anom_cnt,
+                "risk_signals": risk_signals,
+                "issues": risk_signals,
+                "criteria": f"Open pipeline >= ₹2.0 Cr ({fmt_inr(open_val)}) + operational delivery risk ({len(risk_signals)} signal(s))",
             })
 
         rows.append({
             "sector": r["sector"],
-            "open_count": int(r.get("open_count", 0)),
+            "open_count": open_cnt,
             "open_value": open_val,
             "open_value_fmt": fmt_inr(open_val),
             "won": won_cnt,
             "dead": dead_cnt,
             "closed_deals": closed_cnt,
             "win_rate_pct": wr_pct,
-            "wo_count": int(r.get("wo_count", 0)),
+            "wo_count": wo_cnt,
             "wo_value": wo_val,
             "wo_value_fmt": fmt_inr(wo_val),
             "wo_billed": wo_billed,
@@ -799,7 +831,13 @@ def sector_overview(
             "wo_receivable_fmt": fmt_inr(wo_rec),
             "wo_to_bill": wo_to_bill,
             "wo_to_bill_fmt": fmt_inr(wo_to_bill),
-            "cross_board_issues": flags,
+            "wo_delayed_count": delayed_cnt,
+            "operational_anomalies": anom_cnt,
+            "has_large_pipeline": has_large_pipeline,
+            "has_delivery_risk": has_delivery_risk,
+            "has_both_pipeline_and_risk": has_large_pipeline and has_delivery_risk,
+            "risk_signals": risk_signals,
+            "cross_board_issues": risk_signals,
         })
 
     # Rankings
@@ -883,11 +921,24 @@ def sector_overview(
         )
 
     if cross_board_investigate:
-        investigate_notes = "; ".join(
-            f"**{c['sector']}** ({', '.join(c['issues'])})"
-            for c in cross_board_investigate
+        summary_lines.append("\n- **Sectors with BOTH a large sales pipeline and operational delivery risk:**")
+        for c in cross_board_investigate:
+            summary_lines.append(
+                f"  - **{c['sector']}**: Open Pipeline {c['open_value_fmt']} ({c['open_count']} deals) | "
+                f"Delivery Footprint: {c['wo_count']} orders ({c['wo_value_fmt']}) | "
+                f"Operational Risks: {'; '.join(c['risk_signals'])}."
+            )
+        summary_lines.append(
+            "  _(Criteria: large pipeline defined as open value ≥ ₹2.0 Cr; operational risk defined as delayed orders, unbilled gap ≥ ₹1.5 Cr, receivables ≥ ₹1.0 Cr, or billing anomalies.)_"
         )
-        summary_lines.append(f"- **Cross-board operational risk sectors:** {investigate_notes}.")
+
+    # Note sectors with large pipeline but no execution footprint
+    large_pipeline_no_ops = [r for r in rows if r.get("has_large_pipeline") and r.get("wo_count", 0) == 0]
+    if large_pipeline_no_ops:
+        no_ops_details = ", ".join(f"**{r['sector']}** ({r['open_value_fmt']}, {r['open_count']} deals)" for r in large_pipeline_no_ops)
+        summary_lines.append(
+            f"- **Large pipeline with no execution footprint:** {no_ops_details} (pre-operational/tender stage; no active delivery risk)."
+        )
 
     summary_lines.append("\n**Sector Breakdown:**")
     for r in sorted(rows, key=lambda x: (x["open_value"], x["wo_value"]), reverse=True):
